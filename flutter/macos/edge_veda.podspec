@@ -54,9 +54,9 @@ Features sub-200ms latency, 100% privacy, and zero server costs.
       '$(inherited)',
       '-framework Metal', '-framework MetalPerformanceShaders', '-framework Accelerate',
       '-framework IOKit', '-framework AppKit',
-      # Path assumes universal (arm64+x86_64) XCFramework layout produced by
-      # build-macos.sh. If building single-arch, this directory name will differ.
-      '-force_load "${PODS_ROOT}/../Flutter/ephemeral/.symlinks/plugins/edge_veda/macos/Frameworks/EdgeVedaCore.xcframework/macos-arm64_x86_64/libedge_veda_full.a"',
+      # Link the static library (without -force_load which breaks Flutter debug dylib)
+      '-L"${PODS_ROOT}/../Flutter/ephemeral/.symlinks/plugins/edge_veda/macos/Frameworks/EdgeVedaCore.xcframework/macos-arm64_x86_64"',
+      '-ledge_veda_full',
       # Edge Veda FFI symbols
       '-Wl,-u,_ev_version', '-Wl,-exported_symbol,_ev_version',
       '-Wl,-u,_ev_init', '-Wl,-exported_symbol,_ev_init',
