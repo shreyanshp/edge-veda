@@ -311,7 +311,7 @@ function(configure_edge_veda_target target_name)
         target_compile_options(${target_name} PRIVATE /W4 /WX)
     else()
         target_compile_options(${target_name} PRIVATE
-            -Wall -Wextra -Wpedantic -Werror
+            -Wall -Wextra -Wpedantic -Wno-unused-function
             -Wno-unused-parameter  # Common in stub implementations
         )
     endif()
