@@ -17,7 +17,12 @@ import 'types.dart';
 class ModelManager {
   static const String _modelsCacheDir = 'edge_veda_models';
   static const String _metadataFileName = 'metadata.json';
-  static const int _maxRetries = 3;
+  // Bumped from 3 → 6 after Sentry saw repeated
+  // ClientException: Connection closed while receiving data on cellular
+  // connections during 3GB+ model downloads (issue Qsa). With exponential
+  // backoff starting at 1s, 6 attempts takes ~63s max, which is still
+  // responsive but gives flaky networks meaningful opportunity to recover.
+  static const int _maxRetries = 6;
   static const Duration _initialRetryDelay = Duration(seconds: 1);
   static const Duration _streamChunkTimeout = Duration(seconds: 30);
 
@@ -337,6 +342,27 @@ class ModelManager {
           }
           await Future.delayed(retryDelay);
           retryDelay *= 2;
+        } on http.ClientException catch (e) {
+          // ClientException wraps mid-stream connection drops like
+          // "Connection closed while receiving data" — these are also
+          // transient and the .tmp file is preserved, so the next
+          // attempt will resume from the last byte via Range header.
+          lastSocketError = SocketException(e.message);
+          if (attempt >= _maxRetries) {
+            break;
+          }
+          await Future.delayed(retryDelay);
+          retryDelay *= 2;
+        } on TimeoutException catch (e) {
+          // Stream chunk timeout — also resumable via .tmp file.
+          lastSocketError = SocketException(
+            'Stream timeout: ${e.message ?? 'no data for ${_streamChunkTimeout.inSeconds}s'}',
+          );
+          if (attempt >= _maxRetries) {
+            break;
+          }
+          await Future.delayed(retryDelay);
+          retryDelay *= 2;
         } on DownloadException catch (e) {
           // HTTP/status/validation error for this host - move to next candidate.
           lastDownloadError = e;
@@ -565,6 +591,16 @@ class ModelManager {
       }
 
       if (e is EdgeVedaException) {
+        rethrow;
+      }
+      // Transient network errors must escape unwrapped so the caller's
+      // retry loop (_downloadWithRetry) can recognize them and retry
+      // with exponential backoff + byte-range resume. Wrapping them as
+      // DownloadException would short-circuit the retry path and surface
+      // the failure as a one-shot error (Sentry issue Qsa on 3GB gguf).
+      if (e is SocketException ||
+          e is http.ClientException ||
+          e is TimeoutException) {
         rethrow;
       }
       throw DownloadException(
