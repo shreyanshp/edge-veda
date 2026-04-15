@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'EdgeVedaCore'
-  s.version          = '2.5.0'
+  s.version          = '2.5.1'
   s.summary          = 'On-device AI inference engine for Edge Veda SDK'
   s.description      = <<-DESC
     Pre-built dynamic XCFramework containing llama.cpp, whisper.cpp, and

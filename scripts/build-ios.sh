@@ -109,7 +109,8 @@ cmake -B "$BUILD_IOS_DEVICE" \
     -DCMAKE_BUILD_TYPE=$BUILD_TYPE \
     -DEDGE_VEDA_BUILD_SHARED=OFF \
     -DEDGE_VEDA_BUILD_STATIC=ON \
-    -DEDGE_VEDA_ENABLE_METAL=ON
+    -DEDGE_VEDA_ENABLE_METAL=ON \
+    -DGGML_METAL=ON
 
 cmake --build "$BUILD_IOS_DEVICE" --config $BUILD_TYPE
 
@@ -156,7 +157,9 @@ cmake -B "$BUILD_IOS_SIM" \
     -DCMAKE_BUILD_TYPE=$BUILD_TYPE \
     -DEDGE_VEDA_BUILD_SHARED=OFF \
     -DEDGE_VEDA_BUILD_STATIC=ON \
-    -DEDGE_VEDA_ENABLE_METAL=OFF
+    -DEDGE_VEDA_ENABLE_METAL=OFF \
+    -DGGML_METAL=OFF \
+    -DGGML_METAL_EMBED_LIBRARY=OFF
 
 cmake --build "$BUILD_IOS_SIM" --config $BUILD_TYPE
 
@@ -347,7 +350,7 @@ cat > "$DEVICE_FW_DIR/Info.plist" << 'PLIST'
   <key>CFBundleName</key>
   <string>EdgeVedaCore</string>
   <key>CFBundleShortVersionString</key>
-  <string>2.5.0</string>
+  <string>2.5.1</string>
   <key>CFBundleVersion</key>
   <string>1</string>
   <key>CFBundlePackageType</key>
@@ -389,7 +392,7 @@ cat > "$SIM_FW_DIR/Info.plist" << 'PLIST'
   <key>CFBundleName</key>
   <string>EdgeVedaCore</string>
   <key>CFBundleShortVersionString</key>
-  <string>2.5.0</string>
+  <string>2.5.1</string>
   <key>CFBundleVersion</key>
   <string>1</string>
   <key>CFBundlePackageType</key>

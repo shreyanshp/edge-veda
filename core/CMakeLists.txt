@@ -141,10 +141,19 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp/CMakeLists.txt")
     set(LLAMA_OPENSSL OFF CACHE BOOL "" FORCE)
     set(LLAMA_LLGUIDANCE OFF CACHE BOOL "" FORCE)
 
-    # Metal configuration for iOS/macOS (using GGML_METAL, not deprecated LLAMA_METAL)
-    if(IOS OR MACOS)
+    # Metal configuration for iOS/macOS (using GGML_METAL, not deprecated LLAMA_METAL).
+    # MUST gate on EDGE_VEDA_ENABLE_METAL — without this, the iOS simulator
+    # build (which forces ENABLE_METAL=OFF because Metal init crashes inside
+    # the sim) would still link libggml-metal and crash on first vision /
+    # first inference call when ggml probes available backends.
+    if((IOS OR MACOS) AND EDGE_VEDA_ENABLE_METAL)
         set(GGML_METAL ON CACHE BOOL "" FORCE)
         set(GGML_METAL_EMBED_LIBRARY ON CACHE BOOL "" FORCE)
+    elseif(IOS OR MACOS)
+        # Explicitly disable on Apple platforms when the user opted out
+        # so llama.cpp's default-on behaviour doesn't sneak Metal back in.
+        set(GGML_METAL OFF CACHE BOOL "" FORCE)
+        set(GGML_METAL_EMBED_LIBRARY OFF CACHE BOOL "" FORCE)
     endif()
 
     # Accelerate framework for Apple platforms
@@ -206,9 +215,14 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/stable-diffusion.cpp/CMakeLis
     set(SD_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
     set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 
-    # Metal configuration for sd.cpp on Apple platforms
-    if(IOS OR MACOS)
+    # Metal configuration for sd.cpp on Apple platforms — same gating as
+    # llama.cpp: opt out completely when EDGE_VEDA_ENABLE_METAL is OFF
+    # (e.g. iOS simulator builds) so SD doesn't reference Metal symbols
+    # that won't exist in the Metal-less ggml.
+    if((IOS OR MACOS) AND EDGE_VEDA_ENABLE_METAL)
         set(SD_METAL ON CACHE BOOL "" FORCE)
+    elseif(IOS OR MACOS)
+        set(SD_METAL OFF CACHE BOOL "" FORCE)
     endif()
 
     add_subdirectory(third_party/stable-diffusion.cpp)
