@@ -269,45 +269,57 @@ class DeviceProfile {
 
   /// hw.machine -> (Device Name, RAM GB, Chip, DeviceTier)
   static const Map<String, (String, double, String, DeviceTier)> _deviceDb = {
+    // Tier policy (calibrated against 2B-param Q4_K_M + Metal):
+    //   minimum → pre-A11 / iPhone 7 era (no Metal 3)
+    //   low     → A11-A14 with 4 GB (Metal OK, memory-constrained)
+    //   medium  → A14-A15 with 6 GB OR A15 w/ 4 GB (plenty for 2-3 B)
+    //   high    → A16-A18 with 6-8 GB (handles 7 B Q4 comfortably)
+    //   ultra   → A18 Pro / A19+ / Apple Silicon Mac (13 B+ runs)
+    //
+    // Earlier table had iPhone 13 (A15 + 4 GB Metal) at minimum which
+    // was wildly wrong — it hobbled context to 1024, shortened response
+    // budgets, and triggered unnecessary CPU fallbacks. A15 with Metal
+    // runs Gemma 4 E2B Q4 at ~25 tok/s. Promoting to low/medium.
+
     // iPhone 12 series (2020) - A14 Bionic
-    'iPhone13,1': ('iPhone 12 mini', 4, 'A14 Bionic', DeviceTier.minimum),
-    'iPhone13,2': ('iPhone 12', 4, 'A14 Bionic', DeviceTier.minimum),
-    'iPhone13,3': ('iPhone 12 Pro', 6, 'A14 Bionic', DeviceTier.low),
-    'iPhone13,4': ('iPhone 12 Pro Max', 6, 'A14 Bionic', DeviceTier.low),
+    'iPhone13,1': ('iPhone 12 mini', 4, 'A14 Bionic', DeviceTier.low),
+    'iPhone13,2': ('iPhone 12', 4, 'A14 Bionic', DeviceTier.low),
+    'iPhone13,3': ('iPhone 12 Pro', 6, 'A14 Bionic', DeviceTier.medium),
+    'iPhone13,4': ('iPhone 12 Pro Max', 6, 'A14 Bionic', DeviceTier.medium),
 
     // iPhone 13 series (2021) - A15 Bionic
-    'iPhone14,4': ('iPhone 13 mini', 4, 'A15 Bionic', DeviceTier.minimum),
-    'iPhone14,5': ('iPhone 13', 4, 'A15 Bionic', DeviceTier.minimum),
-    'iPhone14,2': ('iPhone 13 Pro', 6, 'A15 Bionic', DeviceTier.low),
-    'iPhone14,3': ('iPhone 13 Pro Max', 6, 'A15 Bionic', DeviceTier.low),
+    'iPhone14,4': ('iPhone 13 mini', 4, 'A15 Bionic', DeviceTier.low),
+    'iPhone14,5': ('iPhone 13', 4, 'A15 Bionic', DeviceTier.low),
+    'iPhone14,2': ('iPhone 13 Pro', 6, 'A15 Bionic', DeviceTier.medium),
+    'iPhone14,3': ('iPhone 13 Pro Max', 6, 'A15 Bionic', DeviceTier.medium),
 
-    // iPhone SE 3rd gen (2022) - A15 Bionic
-    'iPhone14,6': ('iPhone SE (3rd gen)', 4, 'A15 Bionic', DeviceTier.minimum),
+    // iPhone SE 3rd gen (2022) - A15 Bionic 4 GB
+    'iPhone14,6': ('iPhone SE (3rd gen)', 4, 'A15 Bionic', DeviceTier.low),
 
     // iPhone 14 series (2022) - A15/A16 Bionic
-    'iPhone14,7': ('iPhone 14', 6, 'A15 Bionic', DeviceTier.low),
-    'iPhone14,8': ('iPhone 14 Plus', 6, 'A15 Bionic', DeviceTier.low),
-    'iPhone15,2': ('iPhone 14 Pro', 6, 'A16 Bionic', DeviceTier.medium),
-    'iPhone15,3': ('iPhone 14 Pro Max', 6, 'A16 Bionic', DeviceTier.medium),
+    'iPhone14,7': ('iPhone 14', 6, 'A15 Bionic', DeviceTier.medium),
+    'iPhone14,8': ('iPhone 14 Plus', 6, 'A15 Bionic', DeviceTier.medium),
+    'iPhone15,2': ('iPhone 14 Pro', 6, 'A16 Bionic', DeviceTier.high),
+    'iPhone15,3': ('iPhone 14 Pro Max', 6, 'A16 Bionic', DeviceTier.high),
 
     // iPhone 15 series (2023) - A16/A17 Pro
-    'iPhone15,4': ('iPhone 15', 6, 'A16 Bionic', DeviceTier.medium),
-    'iPhone15,5': ('iPhone 15 Plus', 6, 'A16 Bionic', DeviceTier.medium),
+    'iPhone15,4': ('iPhone 15', 6, 'A16 Bionic', DeviceTier.high),
+    'iPhone15,5': ('iPhone 15 Plus', 6, 'A16 Bionic', DeviceTier.high),
     'iPhone16,1': ('iPhone 15 Pro', 8, 'A17 Pro', DeviceTier.high),
     'iPhone16,2': ('iPhone 15 Pro Max', 8, 'A17 Pro', DeviceTier.high),
 
     // iPhone 16 series (2024) - A18/A18 Pro
     'iPhone17,3': ('iPhone 16', 8, 'A18', DeviceTier.high),
     'iPhone17,4': ('iPhone 16 Plus', 8, 'A18', DeviceTier.high),
-    'iPhone17,1': ('iPhone 16 Pro', 8, 'A18 Pro', DeviceTier.high),
-    'iPhone17,2': ('iPhone 16 Pro Max', 8, 'A18 Pro', DeviceTier.high),
+    'iPhone17,1': ('iPhone 16 Pro', 8, 'A18 Pro', DeviceTier.ultra),
+    'iPhone17,2': ('iPhone 16 Pro Max', 8, 'A18 Pro', DeviceTier.ultra),
 
     // iPhone 16e / SE 4th gen (2025) - A18
     'iPhone17,5': ('iPhone 16e', 8, 'A18', DeviceTier.high),
 
     // iPhone 17 series (2025) - A19/A19 Pro
-    'iPhone18,3': ('iPhone 17', 8, 'A19', DeviceTier.high),
-    'iPhone18,4': ('iPhone Air', 8, 'A19', DeviceTier.high),
+    'iPhone18,3': ('iPhone 17', 8, 'A19', DeviceTier.ultra),
+    'iPhone18,4': ('iPhone Air', 8, 'A19', DeviceTier.ultra),
     'iPhone18,1': ('iPhone 17 Pro', 12, 'A19 Pro', DeviceTier.ultra),
     'iPhone18,2': ('iPhone 17 Pro Max', 12, 'A19 Pro', DeviceTier.ultra),
 

@@ -9,7 +9,7 @@
 library;
 
 import 'dart:ffi';
-import 'dart:io' show Platform;
+import 'dart:io' show File, Platform;
 
 import 'package:ffi/ffi.dart';
 
@@ -943,8 +943,39 @@ class EdgeVedaNativeBindings {
     if (Platform.isAndroid) {
       return DynamicLibrary.open('libedge_veda.so');
     } else if (Platform.isIOS) {
-      // On iOS, load the vendored dynamic framework
-      return DynamicLibrary.open('EdgeVedaCore.framework/EdgeVedaCore');
+      // iOS hardened-runtime rejects bare relative paths. Try the
+      // @executable_path/Frameworks absolute path first (resilient
+      // when @rpath resolution is wonky) and fall back to the
+      // conventional relative lookup that works via LC_RPATH.
+      //
+      // If both fail, we report BOTH paths we tried so a Sentry
+      // stack trace points at embed-phase bugs immediately instead
+      // of generic dyld chatter. Sentry 7414461351 was one such
+      // case — EdgeVedaCore.framework was missing from the IPA
+      // because a Podfile post_install silently skipped embed.
+      final exeDir =
+          File(Platform.resolvedExecutable).parent.path;
+      final absPath =
+          '$exeDir/Frameworks/EdgeVedaCore.framework/EdgeVedaCore';
+      try {
+        return DynamicLibrary.open(absPath);
+      } catch (absError) {
+        try {
+          return DynamicLibrary.open(
+              'EdgeVedaCore.framework/EdgeVedaCore');
+        } catch (rpathError) {
+          throw UnsupportedError(
+            'Failed to load EdgeVedaCore.framework.\n'
+            'Tried absolute: $absPath\n'
+            '  → $absError\n'
+            'Tried @rpath: EdgeVedaCore.framework/EdgeVedaCore\n'
+            '  → $rpathError\n'
+            'Framework is almost certainly missing from '
+            'Runner.app/Frameworks/ — check the "[CP] Embed Pods '
+            'Frameworks" build phase in the IPA.',
+          );
+        }
+      }
     } else if (Platform.isMacOS) {
       // On macOS, the library is statically linked via the Flutter plugin
       return DynamicLibrary.process();
