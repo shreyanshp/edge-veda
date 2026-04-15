@@ -319,7 +319,20 @@ void ev_vision_free(ev_vision_context ctx) {
 }
 
 bool ev_vision_is_valid(ev_vision_context ctx) {
-    return ctx != nullptr && ctx->model_loaded;
+    // Check every field so a half-evicted context (where vision_evict_cb
+    // has nulled llama_ctx / mtmd_ctx but the caller hasn't yet picked up
+    // model_loaded=false) doesn't slip through to a null-ptr deref in
+    // llama_get_memory / mtmd_* calls. Must be called under ctx->mutex by
+    // anyone about to touch the inner pointers, to avoid a TOCTOU race
+    // with vision_evict_cb.
+    if (ctx == nullptr) return false;
+    if (!ctx->model_loaded) return false;
+#ifdef EDGE_VEDA_LLAMA_ENABLED
+    if (ctx->llama_ctx == nullptr) return false;
+    if (ctx->model == nullptr) return false;
+    if (ctx->mtmd_ctx == nullptr) return false;
+#endif
+    return true;
 }
 
 /* ============================================================================
@@ -342,12 +355,19 @@ ev_error_t ev_vision_describe(
     if (width <= 0 || height <= 0) {
         return EV_ERROR_INVALID_PARAM;
     }
-    if (!ev_vision_is_valid(ctx)) {
+    if (ctx == nullptr) {
         return EV_ERROR_CONTEXT_INVALID;
     }
 
     memory_guard_touch_engine(MG_ENGINE_VISION);
     std::lock_guard<std::mutex> lock(ctx->mutex);
+
+    // Re-validate under the lock — vision_evict_cb may have nulled
+    // llama_ctx/mtmd_ctx between the callsite-level is_valid check
+    // (if any) and acquiring this lock.
+    if (!ev_vision_is_valid(ctx)) {
+        return EV_ERROR_CONTEXT_INVALID;
+    }
 
     // Resolve generation parameters
     ev_generation_params gen_params;
@@ -593,7 +613,7 @@ ev_vision_stream ev_vision_describe_stream(
         if (error) *error = EV_ERROR_INVALID_PARAM;
         return nullptr;
     }
-    if (!ev_vision_is_valid(ctx)) {
+    if (ctx == nullptr) {
         if (error) *error = EV_ERROR_CONTEXT_INVALID;
         return nullptr;
     }
@@ -602,6 +622,14 @@ ev_vision_stream ev_vision_describe_stream(
 
 #ifdef EDGE_VEDA_LLAMA_ENABLED
     std::lock_guard<std::mutex> lock(ctx->mutex);
+
+    // Re-validate under the lock — vision_evict_cb may have nulled
+    // inner pointers between any callsite-level is_valid check and
+    // acquiring this lock.
+    if (!ev_vision_is_valid(ctx)) {
+        if (error) *error = EV_ERROR_CONTEXT_INVALID;
+        return nullptr;
+    }
 
     // Clear KV cache for fresh generation
     llama_memory_clear(llama_get_memory(ctx->llama_ctx), true);
