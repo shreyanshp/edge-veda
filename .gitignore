@@ -4,8 +4,16 @@ builds/
 cmake-build-*/
 out/
 dist/
-*.framework/
-*.xcframework/
+# Intentionally NOT ignoring *.framework/ or *.xcframework/ — we track
+# the prebuilt XCFrameworks at flutter/{ios,macos}/Frameworks/ and they
+# must survive git clone for downstream consumers (flutter-news podspec
+# uses :git source + vendored_frameworks path inside the cloned repo).
+# Previously `*.xcframework/` here caused CocoaPods to drop the
+# vendored framework from Pods/EdgeVedaCore/ on fresh pod install,
+# breaking iOS and watchOS builds (Sentry 7414461351 family).
+# Only ignore XCFrameworks under transient build/ outputs:
+build/**/*.xcframework/
+build/**/*.framework/
 *.aar
 
 # IDE files
@@ -212,7 +220,8 @@ cactus/
 build/macos-arm64/
 build/macos-x86_64/
 build/macos-merged/
-flutter/macos/Frameworks/EdgeVedaCore.xcframework
+# flutter/macos/Frameworks/EdgeVedaCore.xcframework is INTENTIONALLY
+# tracked (prebuilt artifact shipped for downstream consumers).
 
 # Test binaries
 test_backend_detection
