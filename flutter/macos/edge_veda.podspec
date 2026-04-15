@@ -25,12 +25,4 @@ Pod::Spec.new do |s|
     'CLANG_CXX_LANGUAGE_STANDARD' => 'c++17',
     'CLANG_CXX_LIBRARY' => 'libc++',
   }
-
-  # Force-load the vendored static archive so ALL C/C++ symbols survive
-  # dead stripping. Without this, dlsym(RTLD_DEFAULT, "ev_version") fails
-  # because the linker strips symbols that no ObjC/Swift code references —
-  # they are only called at runtime via Dart FFI.
-  s.user_target_xcconfig = {
-    'OTHER_LDFLAGS' => '$(inherited) -force_load "${PODS_ROOT}/../Flutter/ephemeral/.symlinks/plugins/edge_veda/macos/Frameworks/EdgeVedaCore.xcframework/macos-arm64_x86_64/libedge_veda_full.a"',
-  }
 end
