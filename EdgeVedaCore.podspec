@@ -24,7 +24,13 @@ Pod::Spec.new do |s|
   # The zip contains EdgeVedaCore.xcframework/ at root level.
   s.vendored_frameworks   = 'EdgeVedaCore.xcframework'
 
+  # XCFramework only ships arm64 simulator slice (no x86_64). Force every
+  # consumer to skip x86_64 sim too — otherwise watchOS-style builds that
+  # also link the paired iOS host fail to find the framework.
   s.pod_target_xcconfig = {
-    'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'i386',
+    'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'i386 x86_64',
+  }
+  s.user_target_xcconfig = {
+    'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'i386 x86_64',
   }
 end
