@@ -6,7 +6,7 @@
 library;
 
 import 'dart:ffi' as ffi;
-import 'dart:io' show Platform;
+import 'dart:io' show File, Platform;
 import 'dart:math' show log, min, max;
 
 import 'package:ffi/ffi.dart';
