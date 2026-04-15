@@ -346,6 +346,8 @@ cat > "$DEVICE_FW_DIR/Info.plist" << 'PLIST'
   <string>com.edgeveda.core</string>
   <key>CFBundleName</key>
   <string>EdgeVedaCore</string>
+  <key>CFBundleShortVersionString</key>
+  <string>2.5.0</string>
   <key>CFBundleVersion</key>
   <string>1</string>
   <key>CFBundlePackageType</key>
@@ -386,6 +388,8 @@ cat > "$SIM_FW_DIR/Info.plist" << 'PLIST'
   <string>com.edgeveda.core</string>
   <key>CFBundleName</key>
   <string>EdgeVedaCore</string>
+  <key>CFBundleShortVersionString</key>
+  <string>2.5.0</string>
   <key>CFBundleVersion</key>
   <string>1</string>
   <key>CFBundlePackageType</key>
