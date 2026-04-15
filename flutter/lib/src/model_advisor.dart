@@ -111,17 +111,42 @@ class DeviceProfile {
   static DeviceProfile detect() {
     if (_cached != null) return _cached!;
 
-    // Android: no sysctlbyname — return pessimistic default.
-    // Real device info is fetched async via TelemetryService MethodChannel.
-    // Use 4 GB / low tier to avoid over-recommending models before true
-    // telemetry arrives (many budget Android devices have 3-4 GB RAM).
+    // Android: read /proc/meminfo for total RAM and /proc/cpuinfo for chip.
+    // No MethodChannel needed — these files are always readable.
     if (Platform.isAndroid) {
-      _cached = const DeviceProfile(
+      double ramGB = 4.0;
+      String chipName = 'ARM64';
+      String deviceName = 'Android Device';
+      try {
+        final memInfo = File('/proc/meminfo').readAsStringSync();
+        final match = RegExp(r'MemTotal:\s+(\d+)\s+kB').firstMatch(memInfo);
+        if (match != null) {
+          ramGB = int.parse(match.group(1)!) / (1024 * 1024);
+        }
+      } catch (_) {}
+      try {
+        final cpuInfo = File('/proc/cpuinfo').readAsStringSync();
+        final hwMatch = RegExp(r'Hardware\s*:\s*(.+)').firstMatch(cpuInfo);
+        if (hwMatch != null) {
+          chipName = hwMatch.group(1)!.trim();
+          deviceName = chipName;
+        }
+      } catch (_) {}
+      final tier = ramGB < 3
+          ? DeviceTier.minimum
+          : ramGB < 6
+              ? DeviceTier.low
+              : ramGB < 10
+                  ? DeviceTier.medium
+                  : ramGB < 16
+                      ? DeviceTier.high
+                      : DeviceTier.ultra;
+      _cached = DeviceProfile(
         identifier: 'android',
-        deviceName: 'Android Device',
-        totalRamGB: 4.0,
-        chipName: 'ARM64',
-        tier: DeviceTier.low,
+        deviceName: deviceName,
+        totalRamGB: ramGB,
+        chipName: chipName,
+        tier: tier,
       );
       return _cached!;
     }
