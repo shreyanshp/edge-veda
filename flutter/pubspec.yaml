@@ -30,6 +30,11 @@ dependencies:
   local_hnsw: ^1.0.0
   path: ^1.9.0
   path_provider: ^2.1.4
+  # True background downloads so multi-GB gguf files survive screen-lock
+  # and app-backgrounded. Uses URLSession background config on iOS and
+  # WorkManager + foreground service on Android. Falls back to the
+  # http-based path on desktop (no background concept there).
+  background_downloader: ^9.5.0
 
 dev_dependencies:
   flutter_test:

@@ -4,9 +4,10 @@ library;
 import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
+import 'package:background_downloader/background_downloader.dart' as bgd;
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
-import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 
@@ -319,6 +320,15 @@ class ModelManager {
     SocketException? lastSocketError;
     DownloadException? lastDownloadError;
 
+    // On iOS/Android we dispatch to background_downloader, which uses
+    // URLSession background config / WorkManager foreground service so
+    // the transfer survives screen-lock + app-backgrounded. On desktop
+    // (macOS/Linux/Windows) there's no meaningful "background" concept
+    // and the http-based path works fine — and we still need it as a
+    // fallback for platforms where background_downloader isn't set up.
+    final useBackgroundDownloader = !kIsWeb &&
+        (Platform.isIOS || Platform.isAndroid || Platform.isMacOS);
+
     for (final downloadUrl in candidateUrls) {
       int attempt = 0;
       Duration retryDelay = _initialRetryDelay;
@@ -326,6 +336,15 @@ class ModelManager {
       while (true) {
         attempt++;
         try {
+          if (useBackgroundDownloader) {
+            return await _performBackgroundDownload(
+              model,
+              modelPath,
+              verifyChecksum,
+              cancelToken,
+              downloadUrl: downloadUrl,
+            );
+          }
           return await _performDownload(
             model,
             modelPath,
@@ -384,11 +403,227 @@ class ModelManager {
     );
   }
 
+  /// True-background download via `background_downloader` plugin.
+  ///
+  /// iOS: backed by URLSession background configuration — the OS keeps
+  /// the transfer running even when the app is suspended, screen-locked,
+  /// or killed. Progress + completion is delivered back via the plugin's
+  /// event stream.
+  ///
+  /// Android: backed by WorkManager + a foreground service with an
+  /// ongoing notification — the download survives app-backgrounded and
+  /// (on API 30+) process restart.
+  ///
+  /// We still run checksum verification and atomic rename ourselves —
+  /// the plugin's own atomicity is platform-specific and we want the
+  /// same semantics everywhere. Downloads land on a `.tmp` filename
+  /// and are renamed to the final path only after SHA-256 passes.
+  Future<String> _performBackgroundDownload(
+    ModelInfo model,
+    String modelPath,
+    bool verifyChecksum,
+    CancelToken? cancelToken, {
+    required String downloadUrl,
+  }) async {
+    // We run background_downloader against a `.tmp` filename. On success
+    // we checksum-verify then atomic-rename to the final path. That way
+    // a partial file left over from a killed-mid-download session can
+    // be safely resumed or discarded without ever being picked up by
+    // isModelDownloaded() as a "cached" model.
+    final tempPath = '$modelPath.tmp';
+    final tempFile = File(tempPath);
+    final tempFilename = path.basename(tempPath);
+    final modelsDir = path.dirname(modelPath);
+    final appSupport = await getApplicationSupportDirectory();
+    // `directory` in background_downloader is relative to baseDirectory.
+    // Our modelsDir lives directly under applicationSupport, so derive
+    // the subdirectory name from the absolute paths.
+    final relativeDir = path.relative(modelsDir, from: appSupport.path);
+
+    // Unique taskId per (model, url) pair so the plugin's internal
+    // resume data doesn't get confused across URL fallback attempts.
+    final urlHash =
+        sha256.convert(utf8.encode(downloadUrl)).toString().substring(0, 8);
+    final taskId = 'edge_veda.${model.id}.$urlHash';
+
+    final task = bgd.DownloadTask(
+      taskId: taskId,
+      url: downloadUrl,
+      filename: tempFilename,
+      baseDirectory: bgd.BaseDirectory.applicationSupport,
+      directory: relativeDir,
+      // Built-in retry budget; matches _maxRetries. The plugin handles
+      // exponential backoff internally between retries — and crucially
+      // resumes via byte-range on HTTP 206-capable hosts (huggingface.co
+      // and our Cloudflare mirrors both qualify).
+      retries: _maxRetries,
+      allowPause: true,
+      updates: bgd.Updates.statusAndProgress,
+      displayName: model.name,
+      metaData: model.id,
+    );
+
+    // Check for pre-existing partial .tmp before kicking off — surface
+    // as initial progress so the UI doesn't blink "0%" during resume.
+    int resumeOffset = 0;
+    if (await tempFile.exists()) {
+      resumeOffset = await tempFile.length();
+    }
+
+    final totalHint = model.sizeBytes > 0 ? model.sizeBytes : 0;
+    if (resumeOffset > 0 && totalHint > 0) {
+      _progressController.add(
+        DownloadProgress(
+          totalBytes: totalHint,
+          downloadedBytes: resumeOffset,
+          speedBytesPerSecond: 0,
+          estimatedSecondsRemaining: null,
+        ),
+      );
+    }
+
+    // Track the last reported byte count so progress events are monotonic
+    // even if the plugin emits stale callbacks after a resume.
+    int lastReportedBytes = resumeOffset;
+    final startTime = DateTime.now();
+
+    // Poll the cancel token on a timer — background_downloader doesn't
+    // accept a cancel token directly, only a taskId, so we bridge.
+    Timer? cancelPoll;
+    if (cancelToken != null) {
+      cancelPoll = Timer.periodic(const Duration(milliseconds: 500), (t) {
+        if (cancelToken.isCancelled) {
+          bgd.FileDownloader().cancelTaskWithId(taskId);
+          t.cancel();
+        }
+      });
+    }
+
+    try {
+      final result = await bgd.FileDownloader().download(
+        task,
+        onProgress: (double progress) {
+          // `progress` is 0.0 → 1.0. Map to byte counts using totalHint;
+          // the plugin's actual bytes are exposed via expectedFileSize
+          // but only late in the task lifecycle, so we derive.
+          if (progress < 0 || progress.isNaN) return;
+          final total = totalHint > 0 ? totalHint : 0;
+          final downloaded = total > 0 ? (progress * total).round() : 0;
+          if (downloaded <= lastReportedBytes) return;
+          lastReportedBytes = downloaded;
+
+          final elapsedMs =
+              DateTime.now().difference(startTime).inMilliseconds;
+          final newBytes = downloaded - resumeOffset;
+          final speed = elapsedMs > 0 ? (newBytes / elapsedMs) * 1000 : 0.0;
+          final remaining = (speed > 0 && total > downloaded)
+              ? ((total - downloaded) / speed).round()
+              : null;
+
+          _progressController.add(
+            DownloadProgress(
+              totalBytes: total,
+              downloadedBytes: downloaded,
+              speedBytesPerSecond: speed,
+              estimatedSecondsRemaining: remaining,
+            ),
+          );
+        },
+      );
+
+      // Map the plugin's status to our exception hierarchy.
+      switch (result.status) {
+        case bgd.TaskStatus.complete:
+          break; // fall through to post-download verification
+        case bgd.TaskStatus.canceled:
+          throw const DownloadException('Download cancelled');
+        case bgd.TaskStatus.paused:
+          // Shouldn't happen under awaited .download() — treat as transient.
+          throw const SocketException('Download paused unexpectedly');
+        case bgd.TaskStatus.notFound:
+          throw DownloadException(
+            'Failed to download model',
+            details: 'HTTP 404 from $downloadUrl',
+          );
+        case bgd.TaskStatus.failed:
+          final ex = result.exception;
+          final httpCode = result.responseStatusCode ?? 0;
+          // Surface HTTP errors as DownloadException (host abandoned,
+          // try next candidate); surface network errors as
+          // SocketException (retry with backoff on same host).
+          if (httpCode >= 400 && httpCode < 500 && httpCode != 429) {
+            throw DownloadException(
+              'Failed to download model',
+              details: 'HTTP $httpCode from $downloadUrl',
+            );
+          }
+          throw SocketException(
+            ex?.description ?? 'background_downloader failed '
+                '(status=${result.status}, http=$httpCode)',
+          );
+        default:
+          throw SocketException(
+            'background_downloader unexpected status: ${result.status}',
+          );
+      }
+
+      // Verify checksum BEFORE atomic rename so a corrupt transfer never
+      // ends up at the final path where load() would try to mmap it.
+      if (verifyChecksum && model.checksum != null) {
+        if (!await tempFile.exists()) {
+          throw const DownloadException(
+            'Failed to download model',
+            details: 'Temp file missing after successful task completion',
+          );
+        }
+        final isValid = await _verifyChecksum(tempPath, model.checksum!);
+        if (!isValid) {
+          try {
+            await tempFile.delete();
+          } catch (_) {}
+          throw ModelValidationException(
+            'SHA256 checksum mismatch',
+            details: 'Expected: ${model.checksum}, file may be corrupted',
+          );
+        }
+      }
+
+      if (!await tempFile.exists()) {
+        throw DownloadException(
+          'Failed to download model',
+          details: 'Temp file missing at $tempPath',
+        );
+      }
+
+      await tempFile.rename(modelPath);
+      final finalSize = await File(modelPath).length();
+
+      _progressController.add(
+        DownloadProgress(
+          totalBytes: finalSize,
+          downloadedBytes: finalSize,
+          speedBytesPerSecond: 0,
+          estimatedSecondsRemaining: 0,
+        ),
+      );
+
+      await _saveModelMetadata(model);
+      return modelPath;
+    } finally {
+      cancelPoll?.cancel();
+      _currentDownloadToken = null;
+    }
+  }
+
   /// Perform the actual download to temp file with atomic rename.
   ///
   /// Supports HTTP byte-range resume: if a .tmp file exists from a prior
   /// interrupted download, sends `Range: bytes=N-` to resume from byte N.
   /// Handles 206 (resume), 200 (fresh/fallback), and 416 (corrupt .tmp).
+  ///
+  /// Used only on desktop (macOS/Linux/Windows) where
+  /// background_downloader doesn't give us meaningful background-mode
+  /// capability. Mobile platforms go through _performBackgroundDownload.
   Future<String> _performDownload(
     ModelInfo model,
     String modelPath,
