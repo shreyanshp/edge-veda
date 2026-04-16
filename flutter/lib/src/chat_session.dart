@@ -240,10 +240,11 @@ class ChatSession {
       // Generate response
       final response = await _edgeVeda.generate(formatted, options: options);
 
-      // Add assistant message
+      // Add assistant message (strip leaked template tokens — see the
+      // sendStream equivalent for rationale)
       final assistantMsg = ChatMessage(
         role: ChatRole.assistant,
-        content: response.text,
+        content: ChatTemplate.stripLeakedTokens(response.text),
         timestamp: DateTime.now(),
       );
       _messages.add(assistantMsg);
@@ -311,8 +312,16 @@ class ChatSession {
         yield chunk;
       }
 
-      // Add complete assistant message to history
-      final responseText = buffer.toString();
+      // Add complete assistant message to history.
+      //
+      // Strip leaked template tokens BEFORE storing. Otherwise a model
+      // that hallucinates e.g. "</start_of_turn>" (Gemma) or "<|im_end|>"
+      // (ChatML) poisons every subsequent turn — _formatConversation()
+      // will write that raw leaked token into the NEXT prompt, breaking
+      // the model's own template parser and causing the next generation
+      // to fail with a tokenizer error. Symptom reported in the field:
+      // first turn works, second turn surfaces as "Something went wrong".
+      final responseText = ChatTemplate.stripLeakedTokens(buffer.toString());
       if (responseText.isNotEmpty) {
         _messages.add(
           ChatMessage(
@@ -397,7 +406,7 @@ class ChatSession {
           // No tool call -- return as normal assistant message
           final assistantMsg = ChatMessage(
             role: ChatRole.assistant,
-            content: response.text,
+            content: ChatTemplate.stripLeakedTokens(response.text),
             timestamp: DateTime.now(),
           );
           _messages.add(assistantMsg);
@@ -446,7 +455,7 @@ class ChatSession {
       );
       final assistantMsg = ChatMessage(
         role: ChatRole.assistant,
-        content: finalResponse.text,
+        content: ChatTemplate.stripLeakedTokens(finalResponse.text),
         timestamp: DateTime.now(),
       );
       _messages.add(assistantMsg);

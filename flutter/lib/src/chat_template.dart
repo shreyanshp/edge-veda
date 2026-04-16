@@ -66,6 +66,40 @@ enum ChatTemplateFormat {
 /// );
 /// ```
 class ChatTemplate {
+  /// Strip special template tokens that the model may hallucinate inside
+  /// its assistant response. Models trained on multiple templates
+  /// sometimes emit the "wrong" end-of-turn variant (e.g. Gemma outputs
+  /// `</start_of_turn>` in XML-closing-tag style, ChatML models leak
+  /// `<|im_end|>`). If these survive into the stored message history,
+  /// the NEXT turn's formatted prompt will contain an in-band special
+  /// token mid-assistant-block, which breaks the model's own template
+  /// parser and causes the second generation to fail with a tokenizer
+  /// or native error ("Something went wrong").
+  ///
+  /// Applied at ChatSession.sendStream's buffer-flush point before the
+  /// assistant message is stored. Pattern covers every family we
+  /// support + common XML-style hallucinations.
+  static final _leakedTokenPattern = RegExp(
+    // Gemma — real tokens plus hallucinated XML-close form
+    r'<start_of_turn>(?:user|model)?\n?|</?end_of_turn>|</start_of_turn>|'
+    // ChatML (Qwen, some others)
+    r'<\|im_start\|>(?:system|user|assistant)?\n?|<\|im_end\|>|<\|endoftext\|>|'
+    // Llama 3
+    r'<\|begin_of_text\|>|<\|end_of_text\|>|<\|eot_id\|>|'
+    r'<\|start_header_id\|>(?:system|user|assistant)?\|?>|<\|end_header_id\|>|'
+    // Qwen3 thinking tokens (not a turn marker but poison next turn too)
+    r'<think>|</think>',
+  );
+
+  /// Strip any leaked template tokens from a generated response before
+  /// it is stored in the session history. Trims leading whitespace so
+  /// the cleaned content doesn't start with stray newlines from the
+  /// template wrapping.
+  static String stripLeakedTokens(String response) {
+    if (response.isEmpty) return response;
+    return response.replaceAll(_leakedTokenPattern, '').trimLeft();
+  }
+
   /// Format a conversation into a prompt string using the specified template
   ///
   /// [template] determines which special tokens and delimiters to use.
