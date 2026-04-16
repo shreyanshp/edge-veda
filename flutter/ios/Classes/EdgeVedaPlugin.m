@@ -78,6 +78,38 @@
     _eventSink = events;
 
     @try {
+        // Configure AVAudioSession for recording BEFORE creating the
+        // engine or querying the input node format. iOS 26+ returns
+        // sampleRate=0 from [inputNode outputFormatForBus:0] when the
+        // session isn't in a recording-capable category — the input
+        // node simply isn't connected until the session says "I want
+        // mic input." Without this, real devices (iPhone 13 on iOS
+        // 26.4.1, Sentry 7415868912) hit AUDIO_FORMAT_UNAVAILABLE
+        // even though the microphone hardware is fine.
+        //
+        // PlayAndRecord + DefaultToSpeaker routes playback through the
+        // speaker (not earpiece) and enables mic input simultaneously.
+        // MixWithOthers avoids interrupting music / podcast playback
+        // that audio_service may have running.
+        AVAudioSession *session = [AVAudioSession sharedInstance];
+        NSError *sessionError = nil;
+        [session setCategory:AVAudioSessionCategoryPlayAndRecord
+                 withOptions:(AVAudioSessionCategoryOptionDefaultToSpeaker |
+                              AVAudioSessionCategoryOptionMixWithOthers |
+                              AVAudioSessionCategoryOptionAllowBluetooth)
+                       error:&sessionError];
+        if (sessionError) {
+            return [FlutterError errorWithCode:@"AUDIO_SESSION_FAILED"
+                                       message:@"Failed to configure audio session for recording"
+                                       details:sessionError.localizedDescription];
+        }
+        [session setActive:YES error:&sessionError];
+        if (sessionError) {
+            return [FlutterError errorWithCode:@"AUDIO_SESSION_ACTIVATE_FAILED"
+                                       message:@"Failed to activate audio session"
+                                       details:sessionError.localizedDescription];
+        }
+
         self.audioEngine = [[AVAudioEngine alloc] init];
         AVAudioInputNode *inputNode = [self.audioEngine inputNode];
 
