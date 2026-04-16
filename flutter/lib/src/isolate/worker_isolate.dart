@@ -26,6 +26,36 @@ import '../model_advisor.dart' show DeviceProfile;
 import '../types.dart' show MemoryStats;
 import 'worker_messages.dart';
 
+/// Human-readable label for an EV_ERROR_* code. Used in error messages
+/// surfaced to callers so "Failed to start stream" becomes
+/// "Failed to start stream (errorCode=-5 EV_ERROR_INFERENCE_FAILED)",
+/// which is actionable during a support call. Keep in sync with
+/// core/include/edge_veda.h.
+String _errorCodeLabel(int code) {
+  switch (code) {
+    case 0:
+      return 'EV_SUCCESS';
+    case -1:
+      return 'EV_ERROR_INVALID_PARAM';
+    case -2:
+      return 'EV_ERROR_OUT_OF_MEMORY';
+    case -3:
+      return 'EV_ERROR_MODEL_LOAD_FAILED';
+    case -4:
+      return 'EV_ERROR_BACKEND_INIT_FAILED';
+    case -5:
+      return 'EV_ERROR_INFERENCE_FAILED';
+    case -6:
+      return 'EV_ERROR_CONTEXT_INVALID';
+    case -7:
+      return 'EV_ERROR_STREAM_ENDED';
+    case -8:
+      return 'EV_ERROR_NOT_IMPLEMENTED';
+    default:
+      return 'EV_ERROR_UNKNOWN';
+  }
+}
+
 /// Worker isolate manager for streaming inference
 ///
 /// Manages a long-lived isolate that holds the native context.
@@ -156,7 +186,18 @@ class StreamingWorker {
       if (response is StreamStartedResponse) {
         completer.complete();
       } else if (response is StreamErrorResponse) {
-        completer.completeError(StateError(response.message));
+        // Propagate the native error code — without it the caller only
+        // sees "Failed to start stream" which makes it impossible to
+        // distinguish EV_ERROR_INFERENCE_FAILED (-5, native llama.cpp
+        // error), EV_ERROR_CONTEXT_INVALID (-6, context corrupt), or
+        // EV_ERROR_STREAM_ENDED (-7, state reused incorrectly) when
+        // debugging turn-2 failures. Encoded in the message so the
+        // StateError → GenerationException wrap preserves it.
+        final code = response.errorCode;
+        final label = _errorCodeLabel(code);
+        completer.completeError(
+          StateError('${response.message} (errorCode=$code $label)'),
+        );
       }
     });
 
@@ -194,7 +235,11 @@ class StreamingWorker {
       if (response is TokenResponse) {
         completer.complete(response);
       } else if (response is StreamErrorResponse) {
-        completer.completeError(StateError(response.message));
+        final code = response.errorCode;
+        final label = _errorCodeLabel(code);
+        completer.completeError(
+          StateError('${response.message} (errorCode=$code $label)'),
+        );
       } else if (response is CancelledResponse) {
         completer.complete(TokenResponse.end());
       }
