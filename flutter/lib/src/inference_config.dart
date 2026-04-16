@@ -18,13 +18,18 @@ class InferenceConfig {
   InferenceConfig._();
 
   /// LLM first-token timeout (covers prefill + first decode).
+  ///
+  /// Bumped high/ultra tiers after observing TimeoutException on
+  /// iPhone 17 Pro sim running Qwen3 0.6B — `<think>` prefill plus
+  /// cold-worker startup routinely exceeds 20–30s even on fast
+  /// hardware without the generation actually being stuck.
   static Duration llmTokenTimeout(DeviceTier tier) {
     return switch (tier) {
       DeviceTier.minimum => const Duration(seconds: 180),
       DeviceTier.low => const Duration(seconds: 120),
       DeviceTier.medium => const Duration(seconds: 90),
-      DeviceTier.high => const Duration(seconds: 30),
-      DeviceTier.ultra => const Duration(seconds: 20),
+      DeviceTier.high => const Duration(seconds: 60),
+      DeviceTier.ultra => const Duration(seconds: 45),
     };
   }
 

@@ -80,15 +80,29 @@ class ChatTemplate {
   /// assistant message is stored. Pattern covers every family we
   /// support + common XML-style hallucinations.
   static final _leakedTokenPattern = RegExp(
-    // Gemma — real tokens plus hallucinated XML-close form
-    r'<start_of_turn>(?:user|model)?\n?|</?end_of_turn>|</start_of_turn>|'
-    // ChatML (Qwen, some others)
-    r'<\|im_start\|>(?:system|user|assistant)?\n?|<\|im_end\|>|<\|endoftext\|>|'
-    // Llama 3
-    r'<\|begin_of_text\|>|<\|end_of_text\|>|<\|eot_id\|>|'
-    r'<\|start_header_id\|>(?:system|user|assistant)?\|?>|<\|end_header_id\|>|'
-    // Qwen3 thinking tokens (not a turn marker but poison next turn too)
-    r'<think>|</think>',
+    // Gemma — real + hallucinated XML-close form
+    r'</?start_of_turn>?(?:user|model)?\n?|</?end_of_turn>?|'
+    // ChatML (Qwen 2.5/3, Yi, many tunes). Small quantized Qwen3 models
+    // leak malformed variants like `</im_end|` (slash + missing `>`)
+    // that llama.cpp also fails to recognize as EOS, so the model keeps
+    // going until max_tokens. Match permissively: optional slash,
+    // optional pipes, optional trailing `>`.
+    r'</?\|?im_start\|?>?(?:system|user|assistant)?\n?|'
+    r'</?\|?im_end\|?>?|'
+    r'</?\|?endoftext\|?>?|'
+    // Llama 3 — same permissive treatment for the variants we've
+    // seen models emit.
+    r'</?\|?begin_of_text\|?>?|</?\|?end_of_text\|?>?|</?\|?eot_id\|?>?|'
+    r'</?\|?start_header_id\|?>?(?:system|user|assistant)?\|?>?|'
+    r'</?\|?end_header_id\|?>?|'
+    // Qwen3 think tokens (poison history even when turn-termination works)
+    r'</?think>|'
+    // Hallucinated role prefixes — small models (Qwen 0.6B especially)
+    // love to emit "Assistant:" or "User:" at the start of a response
+    // because the base corpus is full of them. These aren't template
+    // tokens per se, but they poison the next turn by making the model
+    // think it's replying to a transcript.
+    r'(?:^|\n)\s*(?:Assistant|User|System|Model)\s*:\s*',
   );
 
   /// Strip any leaked template tokens from a generated response before
