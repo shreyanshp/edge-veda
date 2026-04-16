@@ -684,6 +684,16 @@ class ModelAdvisor {
     'Apple Silicon': 2.0,
   };
 
+  /// Fallback chip multipliers by device tier — used for Android devices
+  /// where /proc/cpuinfo chip names are too varied for exact matching.
+  static const _tierChipMultipliers = <DeviceTier, double>{
+    DeviceTier.minimum: 0.4,
+    DeviceTier.low: 0.6,
+    DeviceTier.medium: 0.8,
+    DeviceTier.high: 1.0,
+    DeviceTier.ultra: 1.2,
+  };
+
   static const _quantSpeedMultipliers = <String, double>{
     'Q4_K_M': 1.15,
     'Q8_0': 0.85,
@@ -753,7 +763,9 @@ class ModelAdvisor {
 
     // ── Speed Score ──
     final baseTokPerSec = 160.0 / max(model.parametersB ?? 1.0, 0.1);
-    final chipMult = _chipMultipliers[device.chipName] ?? 0.8;
+    final chipMult = _chipMultipliers[device.chipName] ??
+        _tierChipMultipliers[device.tier] ??
+        0.8;
     final quantMult = _quantSpeedMultipliers[model.quantization] ?? 1.0;
     final estimatedTps = baseTokPerSec * chipMult * quantMult;
     final speedScore = (estimatedTps * 2.0).round().clamp(0, 100);
