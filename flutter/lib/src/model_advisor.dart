@@ -479,8 +479,21 @@ class MemoryEstimator {
       );
     }
 
-    // LLM/VLM models: calibrated formula from research
-    final modelWeightsMB = (model.sizeBytes * 0.15 / (1024 * 1024)).round();
+    // LLM/VLM models.
+    //
+    // Previous formula used `sizeBytes * 0.15` for modelWeightsMB — off
+    // by ~6x. A Q4_K_M gguf's resident memory on iOS is close to the
+    // full file size (mmap pages stay hot during generation; unified
+    // memory means Metal doesn't get a "copy", the pages are shared).
+    // The 0.15 factor let a 1.8GB Gemma 4 E2B pass the fits check on a
+    // 4GB iPhone 13 (2.4GB safe budget) — then iOS watchdog killed the
+    // app for RAM overuse (Sentry 7415826426 / WatchdogTermination).
+    //
+    // Use 0.90 as a conservative estimate: accounts for some pages
+    // being paged out under pressure, but treats the weights as
+    // overwhelmingly resident. The 1.3x global multiplier on top still
+    // applies.
+    final modelWeightsMB = (model.sizeBytes * 0.90 / (1024 * 1024)).round();
 
     // KV cache quantization factor
     final kvQuantFactor = model.quantization == 'F16' ? 2.0 : 1.0;

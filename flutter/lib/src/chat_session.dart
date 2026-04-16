@@ -237,8 +237,15 @@ class ChatSession {
       // Format full conversation
       final formatted = _formatConversation();
 
-      // Generate response
-      final response = await _edgeVeda.generate(formatted, options: options);
+      // Generate response. Honour session's _maxResponseTokens when
+      // the caller doesn't override options — see sendStream for
+      // rationale.
+      final effectiveOptions = options ??
+          GenerateOptions(maxTokens: _maxResponseTokens);
+      final response = await _edgeVeda.generate(
+        formatted,
+        options: effectiveOptions,
+      );
 
       // Add assistant message (strip leaked template tokens — see the
       // sendStream equivalent for rationale)
@@ -299,11 +306,21 @@ class ChatSession {
       // Format full conversation
       final formatted = _formatConversation();
 
-      // Stream response, collecting tokens
+      // Stream response, collecting tokens.
+      //
+      // If the caller didn't pass options, honour the session's
+      // configured _maxResponseTokens. Without this, every stream
+      // silently falls back to GenerateOptions.maxTokens=512 (the
+      // library default), and verbose models like Llama 3.2 1B get
+      // their replies truncated mid-sentence on long answers. Reported
+      // from iPhone 13 sessions where ChatSession was created with
+      // maxResponseTokens=4096 but replies were still cut at ~512.
+      final effectiveOptions = options ??
+          GenerateOptions(maxTokens: _maxResponseTokens);
       final buffer = StringBuffer();
       await for (final chunk in _edgeVeda.generateStream(
         formatted,
-        options: options,
+        options: effectiveOptions,
         cancelToken: cancelToken,
       )) {
         if (!chunk.isFinal) {
