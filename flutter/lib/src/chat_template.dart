@@ -80,8 +80,13 @@ class ChatTemplate {
   /// assistant message is stored. Pattern covers every family we
   /// support + common XML-style hallucinations.
   static final _leakedTokenPattern = RegExp(
-    // Gemma — real + hallucinated XML-close form
-    r'</?start_of_turn>?(?:user|model)?\n?|</?end_of_turn>?|'
+    // Gemma — real + hallucinated XML-close form + typo'd internal
+    // reconstructions. Small quantized Gemma models lose the single
+    // `<end_of_turn>` special-token reference and rebuild it from
+    // pieces, producing variants like `<end_of_of_turn>` or
+    // `<start_of_next_turn>`. Match anything shaped like
+    // `</?(start|end)_of_...turn>?` to catch these.
+    r'</?(?:start|end)_of[_a-z]{0,20}turn>?(?:user|model)?\n?|'
     // ChatML (Qwen 2.5/3, Yi, many tunes). Small quantized Qwen3 models
     // leak malformed variants like `</im_end|` (slash + missing `>`)
     // that llama.cpp also fails to recognize as EOS, so the model keeps
