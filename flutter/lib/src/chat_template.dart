@@ -79,34 +79,51 @@ class ChatTemplate {
   /// Applied at ChatSession.sendStream's buffer-flush point before the
   /// assistant message is stored. Pattern covers every family we
   /// support + common XML-style hallucinations.
+  /// Strip Qwen3 `<think>…</think>` reasoning blocks entirely.
+  ///
+  /// Qwen3 thinking mode produces internal reasoning before the user-
+  /// visible reply. If we only strip the tags, the reasoning text
+  /// remains and reads like the model is monologuing at the user —
+  /// the Qwen3 0.6B 'stuck in thinking' symptom reported from the sim.
+  ///
+  /// Match `<think>` through `</think>` non-greedily with a `[\s\S]`
+  /// character class (Dart RegExp doesn't support DOTALL flag).
+  static final _thinkBlockPattern = RegExp(
+    r'<think>[\s\S]*?</think>\s*',
+    multiLine: true,
+  );
+
+  /// Handle unterminated `<think>` that ran past max_tokens (Qwen3
+  /// 0.6B symptom — runs out of token budget mid-reasoning without
+  /// ever hitting the closing tag). Drop from the tag to end of
+  /// string; better to show empty than a wall of reasoning.
+  static final _unterminatedThinkPattern = RegExp(
+    r'<think>[\s\S]*$',
+    multiLine: true,
+  );
+
   static final _leakedTokenPattern = RegExp(
     // Gemma — real + hallucinated XML-close form + typo'd internal
-    // reconstructions. Small quantized Gemma models lose the single
-    // `<end_of_turn>` special-token reference and rebuild it from
-    // pieces, producing variants like `<end_of_of_turn>` or
-    // `<start_of_next_turn>`. Match anything shaped like
-    // `</?(start|end)_of_...turn>?` to catch these.
+    // reconstructions (`<end_of_of_turn>`, `<start_of_next_turn>`).
     r'</?(?:start|end)_of[_a-z]{0,20}turn>?(?:user|model)?\n?|'
-    // ChatML (Qwen 2.5/3, Yi, many tunes). Small quantized Qwen3 models
-    // leak malformed variants like `</im_end|` (slash + missing `>`)
-    // that llama.cpp also fails to recognize as EOS, so the model keeps
-    // going until max_tokens. Match permissively: optional slash,
-    // optional pipes, optional trailing `>`.
-    r'</?\|?im_start\|?>?(?:system|user|assistant)?\n?|'
-    r'</?\|?im_end\|?>?|'
-    r'</?\|?endoftext\|?>?|'
-    // Llama 3 — same permissive treatment for the variants we've
-    // seen models emit.
+    // ChatML (Qwen 2.5/3, Yi). Small quantized Qwen3 0.6B leaks
+    // malformed variants llama.cpp doesn't detect as EOS:
+    //   <|im_end|>    ← real
+    //   </im_end|     ← slash + missing `>`
+    //   |im_end|      ← missing angle brackets
+    //   | |im_end|    ← outer pipe + space + inner pipes
+    // Structure allowed: optional `</`, then up to two `|` separated
+    // by whitespace, then `im_end`, then optional whitespace + one or
+    // two `|`, then optional `>`.
+    r'</?\|?\s*\|?\s*im_start\s*\|?\s*\|?>?(?:system|user|assistant)?\n?|'
+    r'</?\|?\s*\|?\s*im_end\s*\|?\s*\|?>?|'
+    r'</?\|?\s*\|?\s*endoftext\s*\|?\s*\|?>?|'
+    // Llama 3 — same permissive treatment
     r'</?\|?begin_of_text\|?>?|</?\|?end_of_text\|?>?|</?\|?eot_id\|?>?|'
     r'</?\|?start_header_id\|?>?(?:system|user|assistant)?\|?>?|'
     r'</?\|?end_header_id\|?>?|'
-    // Qwen3 think tokens (poison history even when turn-termination works)
-    r'</?think>|'
-    // Hallucinated role prefixes — small models (Qwen 0.6B especially)
-    // love to emit "Assistant:" or "User:" at the start of a response
-    // because the base corpus is full of them. These aren't template
-    // tokens per se, but they poison the next turn by making the model
-    // think it's replying to a transcript.
+    // Hallucinated role prefixes — small models love to emit these at
+    // line starts because the base corpus is full of transcripts.
     r'(?:^|\n)\s*(?:Assistant|User|System|Model)\s*:\s*',
   );
 
@@ -116,7 +133,15 @@ class ChatTemplate {
   /// template wrapping.
   static String stripLeakedTokens(String response) {
     if (response.isEmpty) return response;
-    return response.replaceAll(_leakedTokenPattern, '').trimLeft();
+    // Order matters:
+    //   1. Drop complete <think>…</think> blocks first so the tokens
+    //      nested inside them don't have to be matched one-by-one.
+    //   2. Drop any unterminated <think> that ran past max_tokens.
+    //   3. Strip individual leaked tokens / malformed EOS variants.
+    var out = response.replaceAll(_thinkBlockPattern, '');
+    out = out.replaceAll(_unterminatedThinkPattern, '');
+    out = out.replaceAll(_leakedTokenPattern, '');
+    return out.trimLeft();
   }
 
   /// Format a conversation into a prompt string using the specified template
