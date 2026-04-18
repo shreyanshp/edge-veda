@@ -1023,7 +1023,7 @@ class ModelRegistry {
   static const ModelInfo llama31_8b = ModelInfo(
     id: 'llama-3.1-8b-instruct-q4',
     name: 'Llama 3.1 8B Instruct',
-    sizeBytes: 4920 * 1024 * 1024, // ~4.9 GB
+    sizeBytes: 4920739232, // ~4.58 GB (Q4_K_M on bartowski/Meta-Llama-3.1-8B-Instruct-GGUF)
     description: 'Highly capable desktop-class 8B instruction model',
     downloadUrl:
         'https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf',
@@ -1040,7 +1040,7 @@ class ModelRegistry {
   static const ModelInfo mistral_nemo_12b = ModelInfo(
     id: 'mistral-nemo-12b-instruct-q4',
     name: 'Mistral Nemo 12B Instruct',
-    sizeBytes: 7100 * 1024 * 1024, // ~7.1 GB
+    sizeBytes: 7477208192, // ~6.96 GB (Q4_K_M on bartowski/Mistral-Nemo-Instruct-2407-GGUF)
     description: 'Powerful desktop-class 12B model with large context window',
     downloadUrl:
         'https://huggingface.co/bartowski/Mistral-Nemo-Instruct-2407-GGUF/resolve/main/Mistral-Nemo-Instruct-2407-Q4_K_M.gguf',
@@ -1058,7 +1058,7 @@ class ModelRegistry {
   static const ModelInfo llama32_1b = ModelInfo(
     id: 'llama-3.2-1b-instruct-q4',
     name: 'Llama 3.2 1B Instruct',
-    sizeBytes: 668 * 1024 * 1024, // ~668 MB
+    sizeBytes: 807694464, // ~770 MB (Q4_K_M on bartowski/Llama-3.2-1B-Instruct-GGUF)
     description: 'Fast and efficient instruction-tuned model',
     downloadUrl:
         'https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf',
@@ -1075,7 +1075,7 @@ class ModelRegistry {
   static const ModelInfo phi35_mini = ModelInfo(
     id: 'phi-3.5-mini-instruct-q4',
     name: 'Phi 3.5 Mini Instruct',
-    sizeBytes: 2300 * 1024 * 1024, // ~2.3 GB
+    sizeBytes: 2393232672, // ~2.23 GB (Q4_K_M on bartowski/Phi-3.5-mini-instruct-GGUF)
     description: 'High-quality reasoning model from Microsoft',
     downloadUrl:
         'https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf',
@@ -1091,7 +1091,7 @@ class ModelRegistry {
   static const ModelInfo gemma2_2b = ModelInfo(
     id: 'gemma-2-2b-instruct-q4',
     name: 'Gemma 2 2B Instruct',
-    sizeBytes: 1600 * 1024 * 1024, // ~1.6 GB
+    sizeBytes: 1708582752, // ~1.59 GB (Q4_K_M on bartowski/gemma-2-2b-it-GGUF)
     description: 'Google\'s efficient instruction model',
     downloadUrl:
         'https://huggingface.co/bartowski/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf',
@@ -1107,7 +1107,7 @@ class ModelRegistry {
   static const ModelInfo tinyLlama = ModelInfo(
     id: 'tinyllama-1.1b-chat-q4',
     name: 'TinyLlama 1.1B Chat',
-    sizeBytes: 669 * 1024 * 1024, // ~669 MB
+    sizeBytes: 668788096, // ~638 MB (Q4_K_M on TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF)
     description: 'Ultra-fast lightweight chat model',
     downloadUrl:
         'https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf',
@@ -1125,7 +1125,7 @@ class ModelRegistry {
   static const ModelInfo qwen3_06b = ModelInfo(
     id: 'qwen3-0.6b-q4',
     name: 'Qwen3 0.6B',
-    sizeBytes: 397 * 1024 * 1024, // ~397 MB Q4_K_M
+    sizeBytes: 396705472, // ~378 MB (Q4_K_M on unsloth/Qwen3-0.6B-GGUF)
     description: 'Compact model with native tool calling support',
     downloadUrl:
         'https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_K_M.gguf',
@@ -1211,11 +1211,11 @@ class ModelRegistry {
   static const ModelInfo llava16_mistral_7b = ModelInfo(
     id: 'llava-1.6-mistral-7b-q4',
     name: 'LLaVA 1.6 Mistral 7B',
-    sizeBytes: 4370 * 1024 * 1024, // ~4.8 GB
+    sizeBytes: 4368439552, // ~4.07 GB (Q4_K_M on cjpais/llava-1.6-mistral-7b-gguf)
     description:
         'State-of-the-art 7B vision-language model for detailed image understanding',
     downloadUrl:
-        'https://huggingface.co/cjpais/llava-1.6-mistral-7b-gguf/resolve/main/llava-1.6-mistral-7b.Q4_K_M.gguf',
+        'https://huggingface.co/cjpais/llava-1.6-mistral-7b-gguf/resolve/main/llava-v1.6-mistral-7b.Q4_K_M.gguf',
     format: 'GGUF',
     quantization: 'Q4_K_M',
     parametersB: 7.0,
@@ -1229,7 +1229,7 @@ class ModelRegistry {
   static const ModelInfo llava16_mistral_7b_mmproj = ModelInfo(
     id: 'llava-1.6-mistral-7b-mmproj-f16',
     name: 'LLaVA 1.6 Mistral 7B Multimodal Projector',
-    sizeBytes: 624 * 1024 * 1024, // ~624 MB
+    sizeBytes: 624451168, // ~596 MB (F16 mmproj on cjpais/llava-1.6-mistral-7b-gguf)
     description: 'Multimodal projector for LLaVA 1.6 Mistral 7B',
     downloadUrl:
         'https://huggingface.co/cjpais/llava-1.6-mistral-7b-gguf/resolve/main/mmproj-model-f16.gguf',
@@ -1244,7 +1244,7 @@ class ModelRegistry {
   static const ModelInfo qwen2vl_7b = ModelInfo(
     id: 'qwen2-vl-7b-instruct-q4',
     name: 'Qwen2-VL 7B Instruct',
-    sizeBytes: 4540 * 1024 * 1024, // ~4.5 GB
+    sizeBytes: 4683072672, // ~4.36 GB (Q4_K_M on bartowski/Qwen2-VL-7B-Instruct-GGUF)
     description: 'Expert VLM with strong OCR and screen reading capabilities',
     downloadUrl:
         'https://huggingface.co/bartowski/Qwen2-VL-7B-Instruct-GGUF/resolve/main/Qwen2-VL-7B-Instruct-Q4_K_M.gguf',
@@ -1261,7 +1261,7 @@ class ModelRegistry {
   static const ModelInfo qwen2vl_7b_mmproj = ModelInfo(
     id: 'qwen2-vl-7b-mmproj-f16',
     name: 'Qwen2-VL 7B Multimodal Projector',
-    sizeBytes: 892 * 1024 * 1024, // ~892 MB
+    sizeBytes: 1352635904, // ~1.26 GB (F16 mmproj on bartowski/Qwen2-VL-7B-Instruct-GGUF)
     description: 'Multimodal projector for Qwen2-VL 7B',
     downloadUrl:
         'https://huggingface.co/bartowski/Qwen2-VL-7B-Instruct-GGUF/resolve/main/mmproj-Qwen2-VL-7B-Instruct-f16.gguf',
@@ -1279,7 +1279,7 @@ class ModelRegistry {
   static const ModelInfo whisperTinyEn = ModelInfo(
     id: 'whisper-tiny-en',
     name: 'Whisper Tiny (English)',
-    sizeBytes: 77 * 1024 * 1024,
+    sizeBytes: 77704715, // ~74 MB (ggerganov/whisper.cpp ggml-tiny.en.bin)
     description: 'Fast English speech recognition, low memory footprint',
     downloadUrl:
         'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin',
@@ -1294,7 +1294,7 @@ class ModelRegistry {
   static const ModelInfo whisperBaseEn = ModelInfo(
     id: 'whisper-base-en',
     name: 'Whisper Base (English)',
-    sizeBytes: 148 * 1024 * 1024,
+    sizeBytes: 147964211, // ~141 MB (ggerganov/whisper.cpp ggml-base.en.bin)
     description: 'Higher accuracy English speech recognition',
     downloadUrl:
         'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin',
@@ -1311,7 +1311,7 @@ class ModelRegistry {
   static const ModelInfo whisperSmall = ModelInfo(
     id: 'whisper-small-multilingual',
     name: 'Whisper Small (Multilingual)',
-    sizeBytes: 244 * 1024 * 1024,
+    sizeBytes: 487601967, // ~465 MB (ggerganov/whisper.cpp ggml-small.bin, multilingual)
     description: 'Good accuracy STT in 50+ languages — best mobile fallback',
     downloadUrl:
         'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin',
@@ -1326,7 +1326,7 @@ class ModelRegistry {
   static const ModelInfo whisperMedium = ModelInfo(
     id: 'whisper-medium-multilingual',
     name: 'Whisper Medium (Multilingual)',
-    sizeBytes: 769 * 1024 * 1024,
+    sizeBytes: 1533763059, // ~1.43 GB (ggerganov/whisper.cpp ggml-medium.bin, multilingual)
     description: 'Production-quality multilingual STT for macOS',
     downloadUrl:
         'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin',
@@ -1342,7 +1342,7 @@ class ModelRegistry {
   static const ModelInfo whisperLargeV3 = ModelInfo(
     id: 'whisper-large-v3-multilingual',
     name: 'Whisper Large v3 (Multilingual)',
-    sizeBytes: 3100 * 1024 * 1024,
+    sizeBytes: 3095033483, // ~2.88 GB (ggerganov/whisper.cpp ggml-large-v3.bin, multilingual)
     description: 'State-of-the-art STT in 100 languages — requires 8GB+ Mac',
     downloadUrl:
         'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin',
@@ -1427,7 +1427,7 @@ class ModelRegistry {
   static const ModelInfo sdxlTurbo = ModelInfo(
     id: 'sdxl-turbo-fp16',
     name: 'SDXL Turbo FP16',
-    sizeBytes: 6800 * 1024 * 1024, // ~6.7 GB
+    sizeBytes: 6938081905, // ~6.46 GB (fp16 on stabilityai/sdxl-turbo)
     description: '1024×1024 high-quality 4-step image generation for macOS',
     downloadUrl:
         'https://huggingface.co/stabilityai/sdxl-turbo/resolve/main/sd_xl_turbo_1.0_fp16.safetensors',
@@ -1442,7 +1442,7 @@ class ModelRegistry {
   static const ModelInfo flux1Schnell = ModelInfo(
     id: 'flux-1-schnell-q4',
     name: 'FLUX.1 Schnell Q4_0',
-    sizeBytes: 12400 * 1024 * 1024, // ~12 GB
+    sizeBytes: 6770707360, // ~6.31 GB (Q4_0 on city96/FLUX.1-schnell-gguf)
     description: 'State-of-the-art 4-step text-to-image — requires 16GB+ Mac',
     downloadUrl:
         'https://huggingface.co/city96/FLUX.1-schnell-gguf/resolve/main/flux1-schnell-Q4_0.gguf',
@@ -1465,7 +1465,7 @@ class ModelRegistry {
   static const ModelInfo allMiniLmL6V2 = ModelInfo(
     id: 'all-minilm-l6-v2-f16',
     name: 'All MiniLM L6 v2',
-    sizeBytes: 46 * 1024 * 1024,
+    sizeBytes: 45949216, // ~43 MB (F16 on leliuga/all-MiniLM-L6-v2-GGUF)
     description: 'Lightweight sentence embedding model (384 dimensions)',
     downloadUrl:
         'https://huggingface.co/leliuga/all-MiniLM-L6-v2-GGUF/resolve/main/all-MiniLM-L6-v2.F16.gguf',
@@ -1484,7 +1484,7 @@ class ModelRegistry {
   static const ModelInfo nomicEmbedText = ModelInfo(
     id: 'nomic-embed-text-v1.5-f16',
     name: 'Nomic Embed Text v1.5',
-    sizeBytes: 87 * 1024 * 1024, // ~87 MB
+    sizeBytes: 274290560, // ~261 MB (f16 on nomic-ai/nomic-embed-text-v1.5-GGUF)
     description: 'High quality 768-dimension embeddings for RAG on macOS',
     downloadUrl:
         'https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.f16.gguf',
@@ -1501,10 +1501,10 @@ class ModelRegistry {
   static const ModelInfo mxbaiEmbedLarge = ModelInfo(
     id: 'mxbai-embed-large-v1-f16',
     name: 'mxbai-embed-large v1',
-    sizeBytes: 335 * 1024 * 1024, // ~335 MB
+    sizeBytes: 669603712, // ~638 MB (fp16 on ChristianAzinn/mxbai-embed-large-v1-gguf)
     description: 'State-of-the-art 1024-dimension embeddings for complex RAG',
     downloadUrl:
-        'https://huggingface.co/ChristianAzinn/mxbai-embed-large-v1-gguf/resolve/main/mxbai-embed-large-v1-f16.gguf',
+        'https://huggingface.co/ChristianAzinn/mxbai-embed-large-v1-gguf/resolve/main/mxbai-embed-large-v1_fp16.gguf',
     format: 'GGUF',
     quantization: 'F16',
     parametersB: 0.34,
