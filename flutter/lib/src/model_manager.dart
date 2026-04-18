@@ -18,6 +18,21 @@ import 'types.dart';
 class ModelManager {
   static const String _modelsCacheDir = 'edge_veda_models';
   static const String _metadataFileName = 'metadata.json';
+
+  /// Optional allowlist of hostnames (and suffix-matched subdomains) from
+  /// which downloads are permitted. When non-null, `downloadModel` rejects
+  /// URLs whose host is not in this set.
+  ///
+  /// Purpose: defense-in-depth for consumers who fetch their model catalog
+  /// over HTTP (e.g. flutter-news pulls it from its own backend). A
+  /// compromised catalog row cannot redirect users to an arbitrary binary;
+  /// at worst the download is rejected.
+  ///
+  /// Matching is suffix-based with a leading-dot guard to prevent
+  /// `evil-huggingface.co` from matching `huggingface.co`. Set to null
+  /// (the default) to allow any host — preserves existing behavior for
+  /// library consumers that already trust their sources.
+  Set<String>? allowedDownloadHosts;
   // Bumped from 3 → 6 after Sentry saw repeated
   // ClientException: Connection closed while receiving data on cellular
   // connections during 3GB+ model downloads (issue Qsa). With exponential
@@ -107,6 +122,7 @@ class ModelManager {
     bool verifyChecksum = true,
     CancelToken? cancelToken,
   }) async {
+    _assertHostAllowed(model.downloadUrl);
     final modelPath = await getModelPath(model.id);
     final file = File(modelPath);
 
@@ -862,6 +878,36 @@ class ModelManager {
     }
 
     return candidates.toSet().toList();
+  }
+
+  /// Throws [DownloadException] if the download URL's host is not in
+  /// [allowedDownloadHosts]. A null allowlist is "no restriction" — the
+  /// pre-hardening behavior.
+  ///
+  /// Match rules: exact host or dot-suffix subdomain. So an allowlist
+  /// entry of `huggingface.co` matches `huggingface.co` and
+  /// `cas-bridge.xethub.hf.co` is NOT matched (different parent), and
+  /// `evil-huggingface.co` is NOT matched (no leading dot boundary).
+  void _assertHostAllowed(String downloadUrl) {
+    final allowed = allowedDownloadHosts;
+    if (allowed == null || allowed.isEmpty) return;
+    final host = Uri.tryParse(downloadUrl)?.host.toLowerCase();
+    if (host == null || host.isEmpty) {
+      throw DownloadException(
+        'Invalid download URL',
+        details: 'Could not parse host from: $downloadUrl',
+      );
+    }
+    final ok = allowed.any((a) {
+      final lower = a.toLowerCase();
+      return host == lower || host.endsWith('.$lower');
+    });
+    if (!ok) {
+      throw DownloadException(
+        'Download host not permitted',
+        details: 'Host "$host" is not in the configured allowlist',
+      );
+    }
   }
 
   /// Verify file checksum (internal helper)
