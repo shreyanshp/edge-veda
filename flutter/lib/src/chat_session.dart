@@ -115,6 +115,7 @@ class ChatSession {
 
   final int _contextLength;
   final int _maxResponseTokens;
+  final List<String> _stopTokens;
   final List<ChatMessage> _messages = [];
   bool _isSummarizing = false;
 
@@ -148,6 +149,14 @@ class ChatSession {
   /// [onValidationEvent] is an optional callback that fires on every
   /// [sendStructured] call with validation pass/fail, recovery details,
   /// and timing information.
+  ///
+  /// [stopTokens] is an optional list of antiprompt sentinels merged
+  /// into every [send] / [sendStream] call's `GenerateOptions`. Use
+  /// this for models with known EOS-mangling bugs (e.g. small quantized
+  /// models that emit malformed end-of-turn tokens) so generation stops
+  /// at the first match regardless of tokenization. Caller-supplied
+  /// [GenerateOptions.stopSequences] is preferred when present — these
+  /// are only used as a fallback.
   ChatSession({
     required EdgeVeda edgeVeda,
     String? systemPrompt,
@@ -156,10 +165,12 @@ class ChatSession {
     int maxResponseTokens = 512,
     ToolRegistry? tools,
     this.onValidationEvent,
+    List<String> stopTokens = const [],
   }) : _edgeVeda = edgeVeda,
        systemPrompt = systemPrompt ?? preset?.prompt,
        _contextLength = edgeVeda.config?.contextLength ?? 2048,
        _maxResponseTokens = maxResponseTokens,
+       _stopTokens = List.unmodifiable(stopTokens),
        _tools = tools {
     if (!edgeVeda.isInitialized) {
       throw const ConfigurationException(
@@ -239,9 +250,10 @@ class ChatSession {
 
       // Generate response. Honour session's _maxResponseTokens when
       // the caller doesn't override options — see sendStream for
-      // rationale.
-      final effectiveOptions = options ??
-          GenerateOptions(maxTokens: _maxResponseTokens);
+      // rationale. Session-level _stopTokens are merged as a fallback
+      // so callers can ship per-model EOS sentinels without threading
+      // GenerateOptions through every send call.
+      final effectiveOptions = _applySessionDefaults(options);
       final response = await _edgeVeda.generate(
         formatted,
         options: effectiveOptions,
@@ -315,8 +327,10 @@ class ChatSession {
       // their replies truncated mid-sentence on long answers. Reported
       // from iPhone 13 sessions where ChatSession was created with
       // maxResponseTokens=4096 but replies were still cut at ~512.
-      final effectiveOptions = options ??
-          GenerateOptions(maxTokens: _maxResponseTokens);
+      //
+      // Session-level stop tokens (if any) are merged as a fallback
+      // when the caller didn't pass their own stopSequences.
+      final effectiveOptions = _applySessionDefaults(options);
       final buffer = StringBuffer();
       await for (final chunk in _edgeVeda.generateStream(
         formatted,
@@ -645,6 +659,29 @@ class ChatSession {
     }
 
     return parsed;
+  }
+
+  /// Merge session-level defaults (maxResponseTokens + stop tokens)
+  /// into the given [options], without overriding anything the caller
+  /// has already set explicitly.
+  ///
+  /// - If [options] is null, a fresh [GenerateOptions] is built from
+  ///   session defaults.
+  /// - If [options].stopSequences is empty AND the session has stop
+  ///   tokens, those are used. A caller-supplied non-empty list wins.
+  /// - maxTokens falls back to the session's configured budget only
+  ///   when [options] is null (matches prior behaviour).
+  GenerateOptions _applySessionDefaults(GenerateOptions? options) {
+    if (options == null) {
+      return GenerateOptions(
+        maxTokens: _maxResponseTokens,
+        stopSequences: _stopTokens,
+      );
+    }
+    if (options.stopSequences.isEmpty && _stopTokens.isNotEmpty) {
+      return options.copyWith(stopSequences: _stopTokens);
+    }
+    return options;
   }
 
   /// Reset conversation history (keep model loaded)

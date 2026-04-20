@@ -177,6 +177,7 @@ class StreamingWorker {
     double confidenceThreshold = 0.0,
     String grammarStr = '',
     String grammarRoot = '',
+    List<String> stopSequences = const [],
   }) async {
     _ensureActive();
 
@@ -212,6 +213,7 @@ class StreamingWorker {
         confidenceThreshold: confidenceThreshold,
         grammarStr: grammarStr,
         grammarRoot: grammarRoot,
+        stopSequences: stopSequences,
       ),
     );
 
@@ -515,6 +517,12 @@ ffi.Pointer<EvStreamImpl>? _handleStartStream(
   final errorPtr = calloc<ffi.Int32>();
   ffi.Pointer<Utf8>? grammarStrPtr;
   ffi.Pointer<Utf8>? grammarRootPtr;
+  // Stop-sequence strings + the array of pointers to them, all
+  // allocated in native memory and freed in the finally block. Empty
+  // when cmd.stopSequences is empty — the native params get nullptr/0
+  // in that case, matching the previous hard-coded behaviour.
+  final stopSeqStrPtrs = <ffi.Pointer<Utf8>>[];
+  ffi.Pointer<ffi.Pointer<Utf8>>? stopSeqArrayPtr;
 
   try {
     paramsPtr.ref.maxTokens = cmd.maxTokens;
@@ -524,8 +532,21 @@ ffi.Pointer<EvStreamImpl>? _handleStartStream(
     paramsPtr.ref.repeatPenalty = cmd.repeatPenalty;
     paramsPtr.ref.frequencyPenalty = 0.0;
     paramsPtr.ref.presencePenalty = 0.0;
-    paramsPtr.ref.stopSequences = ffi.nullptr;
-    paramsPtr.ref.numStopSequences = 0;
+    // Stop sequences — same allocation lifetime as grammarStr: the
+    // native side consumes them during the `evGenerateStream` call.
+    if (cmd.stopSequences.isNotEmpty) {
+      stopSeqArrayPtr = calloc<ffi.Pointer<Utf8>>(cmd.stopSequences.length);
+      for (var i = 0; i < cmd.stopSequences.length; i++) {
+        final ptr = cmd.stopSequences[i].toNativeUtf8();
+        stopSeqStrPtrs.add(ptr);
+        stopSeqArrayPtr[i] = ptr;
+      }
+      paramsPtr.ref.stopSequences = stopSeqArrayPtr;
+      paramsPtr.ref.numStopSequences = cmd.stopSequences.length;
+    } else {
+      paramsPtr.ref.stopSequences = ffi.nullptr;
+      paramsPtr.ref.numStopSequences = 0;
+    }
     // Grammar support
     if (cmd.grammarStr.isNotEmpty) {
       grammarStrPtr = cmd.grammarStr.toNativeUtf8();
@@ -566,6 +587,10 @@ ffi.Pointer<EvStreamImpl>? _handleStartStream(
     calloc.free(promptPtr);
     if (grammarStrPtr != null) calloc.free(grammarStrPtr);
     if (grammarRootPtr != null) calloc.free(grammarRootPtr);
+    for (final p in stopSeqStrPtrs) {
+      calloc.free(p);
+    }
+    if (stopSeqArrayPtr != null) calloc.free(stopSeqArrayPtr);
     calloc.free(paramsPtr);
     calloc.free(errorPtr);
   }

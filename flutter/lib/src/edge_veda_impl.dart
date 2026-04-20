@@ -461,6 +461,7 @@ class EdgeVeda {
         confidenceThreshold: options.confidenceThreshold,
         grammarStr: options.grammarStr ?? '',
         grammarRoot: options.grammarRoot ?? '',
+        stopSequences: options.stopSequences,
       );
       debugPrint('EdgeVeda: Stream started, beginning token loop');
 

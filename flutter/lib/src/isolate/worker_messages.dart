@@ -79,6 +79,12 @@ class StartStreamCommand extends WorkerCommand {
   /// GBNF grammar root rule name
   final String grammarRoot;
 
+  /// Stop sequences — generation halts at the first occurrence of any
+  /// of these. Empty list (the default) means rely on the model's own
+  /// EOS token. Used for small models with quantization-induced EOS
+  /// mangling where the canonical token never quite materialises.
+  final List<String> stopSequences;
+
   StartStreamCommand({
     required this.prompt,
     this.maxTokens = 512,
@@ -89,6 +95,7 @@ class StartStreamCommand extends WorkerCommand {
     this.confidenceThreshold = 0.0,
     this.grammarStr = '',
     this.grammarRoot = '',
+    this.stopSequences = const [],
   });
 }
 
