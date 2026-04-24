@@ -120,9 +120,9 @@ dependencies {
 // in alongside the .so files. Bitrise (and every other build machine)
 // will fail loudly if a mismatch is found.
 ext.expectedJniLibHashes = [
-    'arm64-v8a'  : '1e2ee055742d8e7b5515b5fe03d92f94d4ee245e09a1a8e332ef37d86473c97a',
-    'armeabi-v7a': '057ab28c6113c76086dda091ad5733f460bb720882bef83574192b39bb593616',
-    'x86_64'     : 'a6795fc7b66dccd0ae5c30c3b698bdbb07ecca36bcebd180b38bb1acc66d8317',
+    'arm64-v8a'  : '133254af5ab3a72604ac0ae0b2272a89ed2bd57371648f59ec573afc315a5dbe',
+    'armeabi-v7a': '181f20cde4b3f235e56a0e417c70b582e07b8262f1a908362b2119761fbc7244',
+    'x86_64'     : '018be7f410bb7641875141bf12f230c1c6c39437492d37fa2a26931fcea91bf2',
 ]
 
 task verifyPrebuiltNativeLibs {
