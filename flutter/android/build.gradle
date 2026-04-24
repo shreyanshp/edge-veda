@@ -120,38 +120,51 @@ dependencies {
 // in alongside the .so files. Bitrise (and every other build machine)
 // will fail loudly if a mismatch is found.
 ext.expectedJniLibHashes = [
-    'arm64-v8a'  : '133254af5ab3a72604ac0ae0b2272a89ed2bd57371648f59ec573afc315a5dbe',
-    'armeabi-v7a': '181f20cde4b3f235e56a0e417c70b582e07b8262f1a908362b2119761fbc7244',
-    'x86_64'     : '018be7f410bb7641875141bf12f230c1c6c39437492d37fa2a26931fcea91bf2',
+    'arm64-v8a'  : [
+        'libedge_veda.so'  : '133254af5ab3a72604ac0ae0b2272a89ed2bd57371648f59ec573afc315a5dbe',
+        'libc++_shared.so' : 'ab4e6c71b96b851de45a8a9bd86369e7dbc2130a44b3b4520564be94847910f2',
+    ],
+    'armeabi-v7a': [
+        'libedge_veda.so'  : '181f20cde4b3f235e56a0e417c70b582e07b8262f1a908362b2119761fbc7244',
+        'libc++_shared.so' : '10ee48131d6742899619f7cfb3b8df150ad787d723c766a3fb80d4bb275711ff',
+    ],
+    'x86_64'     : [
+        'libedge_veda.so'  : '018be7f410bb7641875141bf12f230c1c6c39437492d37fa2a26931fcea91bf2',
+        'libc++_shared.so' : 'e4cd73c8a3607269f3be58d15c21f78bff112e27f9398d6261e5f965668f8746',
+    ],
 ]
 
 task verifyPrebuiltNativeLibs {
     doLast {
         def jniLibs = file('src/main/jniLibs')
         def md = java.security.MessageDigest.getInstance('SHA-256')
-        project.ext.expectedJniLibHashes.each { abi, expected ->
-            def so = new File(jniLibs, "${abi}/libedge_veda.so")
-            if (!so.exists()) {
-                throw new GradleException(
-                    "Missing prebuilt libedge_veda.so for ABI '${abi}' at ${so}. " +
-                    "Run scripts/build-android.sh from the edge-veda repo root."
-                )
+        def totalChecked = 0
+        project.ext.expectedJniLibHashes.each { abi, libs ->
+            libs.each { libName, expected ->
+                def so = new File(jniLibs, "${abi}/${libName}")
+                if (!so.exists()) {
+                    throw new GradleException(
+                        "Missing prebuilt ${libName} for ABI '${abi}' at ${so}. " +
+                        "Run scripts/build-android.sh from the edge-veda repo root."
+                    )
+                }
+                md.reset()
+                so.eachByte(64 * 1024) { bytes, size -> md.update(bytes, 0, size) }
+                def actual = md.digest().collect { String.format('%02x', it & 0xff) }.join('')
+                if (actual != expected) {
+                    throw new GradleException(
+                        "SHA-256 mismatch for ${libName}/${abi}:\n" +
+                        "  expected: ${expected}\n" +
+                        "  actual:   ${actual}\n" +
+                        "Binary may have been tampered with or is stale. " +
+                        "Rebuild with scripts/build-android.sh and update expectedJniLibHashes."
+                    )
+                }
+                println "  ✓ ${libName}/${abi} (SHA-256 ${actual.substring(0, 12)}…)"
+                totalChecked++
             }
-            md.reset()
-            so.eachByte(64 * 1024) { bytes, size -> md.update(bytes, 0, size) }
-            def actual = md.digest().collect { String.format('%02x', it & 0xff) }.join('')
-            if (actual != expected) {
-                throw new GradleException(
-                    "SHA-256 mismatch for libedge_veda.so/${abi}:\n" +
-                    "  expected: ${expected}\n" +
-                    "  actual:   ${actual}\n" +
-                    "Binary may have been tampered with or is stale. " +
-                    "Rebuild with scripts/build-android.sh and update expectedJniLibHashes."
-                )
-            }
-            println "  ✓ libedge_veda.so/${abi} (SHA-256 ${actual.substring(0, 12)}…)"
         }
-        println "Edge Veda native libs verified (${project.ext.expectedJniLibHashes.size()} ABIs)"
+        println "Edge Veda native libs verified (${totalChecked} files across ${project.ext.expectedJniLibHashes.size()} ABIs)"
     }
 }
 
