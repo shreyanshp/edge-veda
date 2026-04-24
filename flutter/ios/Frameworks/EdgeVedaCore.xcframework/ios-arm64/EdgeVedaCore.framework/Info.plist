@@ -2,23 +2,21 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>CFBundleExecutable</key>
-	<string>EdgeVedaCore</string>
-	<key>CFBundleIdentifier</key>
-	<string>com.edgeveda.core</string>
-	<key>CFBundleName</key>
-	<string>EdgeVedaCore</string>
-	<key>CFBundlePackageType</key>
-	<string>FMWK</string>
-	<key>CFBundleShortVersionString</key>
-	<string>2.5.2</string>
-	<key>CFBundleSupportedPlatforms</key>
-	<array>
-		<string>iPhoneOS</string>
-	</array>
-	<key>CFBundleVersion</key>
-	<string>1</string>
-	<key>MinimumOSVersion</key>
-	<string>13.0</string>
+  <key>CFBundleIdentifier</key>
+  <string>com.edgeveda.core</string>
+  <key>CFBundleName</key>
+  <string>EdgeVedaCore</string>
+  <key>CFBundleShortVersionString</key>
+  <string>2.5.2</string>
+  <key>CFBundleVersion</key>
+  <string>1</string>
+  <key>CFBundlePackageType</key>
+  <string>FMWK</string>
+  <key>CFBundleExecutable</key>
+  <string>EdgeVedaCore</string>
+  <key>MinimumOSVersion</key>
+  <string>13.0</string>
+  <key>CFBundleSupportedPlatforms</key>
+  <array><string>iPhoneOS</string></array>
 </dict>
 </plist>
