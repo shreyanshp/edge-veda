@@ -97,6 +97,11 @@ struct ev_stream_impl {
     ev_generation_params params;       // Generation parameters
     char* grammar_str_owned = nullptr;   // Owned copy of grammar string (fixes #33)
     char* grammar_root_owned = nullptr;  // Owned copy of grammar root (fixes #33)
+    // Stop-sequence state (app-level string matching — llama.cpp sampler
+    // API has no built-in stop-sequence support, so we check decoded
+    // output against these strings after each token).
+    std::vector<std::string> stop_sequences_owned;  // Deep-copy of params.stop_sequences
+    std::string accumulated_output;                  // Sliding-window buffer for matching
     bool ended;                        // Stream completion flag
     std::atomic<bool> deactivated{false}; // True once active_stream_count decremented
     std::atomic<bool> cancelled{false}; // Thread-safe cancel flag
@@ -136,6 +141,19 @@ struct ev_stream_impl {
                 grammar_root_owned = strdup(params.grammar_root);
                 if (grammar_root_owned) {
                     params.grammar_root = grammar_root_owned;
+                }
+            }
+            // Deep-copy stop sequences. Caller may free the C strings
+            // before the stream completes, so we own them for the
+            // stream's lifetime. Empty strings are skipped.
+            if (params.stop_sequences && params.num_stop_sequences > 0) {
+                stop_sequences_owned.reserve(
+                    static_cast<size_t>(params.num_stop_sequences));
+                for (int i = 0; i < params.num_stop_sequences; ++i) {
+                    const char* s = params.stop_sequences[i];
+                    if (s && s[0] != '\0') {
+                        stop_sequences_owned.emplace_back(s);
+                    }
                 }
             }
         } else {
@@ -680,6 +698,24 @@ ev_error_t ev_generate(
             result.append(buf, static_cast<size_t>(n));
         }
 
+        // Stop-sequence matching (mirrors streaming path). Trim the
+        // result at the first stop-sequence occurrence and break out of
+        // the generation loop.
+        if (gen_params.stop_sequences && gen_params.num_stop_sequences > 0) {
+            bool stop_hit = false;
+            for (int j = 0; j < gen_params.num_stop_sequences; ++j) {
+                const char* s = gen_params.stop_sequences[j];
+                if (!s || s[0] == '\0') continue;
+                const size_t pos = result.find(s);
+                if (pos != std::string::npos) {
+                    result.erase(pos);  // drop the stop and everything after
+                    stop_hit = true;
+                    break;
+                }
+            }
+            if (stop_hit) break;
+        }
+
         // Prepare next batch
         llama_batch next_batch = llama_batch_get_one(&new_token, 1);
 
@@ -938,14 +974,50 @@ char* ev_stream_next(ev_stream stream, ev_error_t* error) {
 
     stream->n_cur++;
 
-    // Allocate and return token string
-    char* result = static_cast<char*>(std::malloc(static_cast<size_t>(n) + 1));
+    // Stop-sequence matching (app-level, since llama.cpp's sampler has no
+    // built-in support). Append the new token text to the sliding buffer,
+    // cap at 4 KiB (enough to catch any reasonable stop sequence even
+    // across token boundaries), then scan for any registered stop.
+    //
+    // If matched, emit only the portion of THIS token's text that comes
+    // before the match start, mark the stream ended, and return — the
+    // stop sequence itself and anything after it is suppressed.
+    size_t emit_bytes = static_cast<size_t>(n);
+    bool stop_hit = false;
+    if (!stream->stop_sequences_owned.empty()) {
+        stream->accumulated_output.append(buf, static_cast<size_t>(n));
+        static constexpr size_t kMaxAccum = 4096;
+        if (stream->accumulated_output.size() > kMaxAccum) {
+            stream->accumulated_output.erase(
+                0, stream->accumulated_output.size() - kMaxAccum);
+        }
+        const size_t token_start =
+            stream->accumulated_output.size() - static_cast<size_t>(n);
+        for (const auto& stop : stream->stop_sequences_owned) {
+            if (stop.empty()) continue;
+            const size_t pos = stream->accumulated_output.find(stop);
+            if (pos != std::string::npos) {
+                emit_bytes = (pos >= token_start) ? (pos - token_start) : 0;
+                stop_hit = true;
+                break;
+            }
+        }
+    }
+
+    if (stop_hit) {
+        stream->mark_ended();
+    }
+
+    // Allocate and return token string (possibly truncated at stop)
+    char* result = static_cast<char*>(std::malloc(emit_bytes + 1));
     if (!result) {
         if (error) *error = EV_ERROR_OUT_OF_MEMORY;
         return nullptr;
     }
-    std::memcpy(result, buf, static_cast<size_t>(n));
-    result[n] = '\0';
+    if (emit_bytes > 0) {
+        std::memcpy(result, buf, emit_bytes);
+    }
+    result[emit_bytes] = '\0';
 
     if (error) *error = EV_SUCCESS;
     return result;
