@@ -5,6 +5,8 @@
 #import <EventKit/EventKit.h>
 #import <mach/mach.h>
 #import <os/proc.h>
+#import <sys/sysctl.h>
+#import <sys/utsname.h>
 
 #pragma mark - ThermalStreamHandler
 
@@ -464,9 +466,280 @@
         result(@(YES));
     } else if ([@"tts_voices" isEqualToString:call.method]) {
         result([_ttsHandler availableVoices]);
+    } else if ([@"saveFileToDownloads" isEqualToString:call.method]) {
+        [self handleSaveFileToDownloads:call result:result];
+    } else if ([@"getDeviceModel" isEqualToString:call.method]) {
+        [self handleGetDeviceModel:result];
+    } else if ([@"getChipName" isEqualToString:call.method]) {
+        [self handleGetChipName:result];
+    } else if ([@"getTotalMemory" isEqualToString:call.method]) {
+        [self handleGetTotalMemory:result];
+    } else if ([@"hasNeuralEngine" isEqualToString:call.method]) {
+        [self handleHasNeuralEngine:result];
+    } else if ([@"getGpuBackend" isEqualToString:call.method]) {
+        [self handleGetGpuBackend:result];
     } else {
         result(FlutterMethodNotImplemented);
     }
+}
+
+#pragma mark - Save File To Downloads (iOS)
+
+/// iOS has no shared "Downloads" folder, so copy the file into the app's
+/// Documents directory (visible via the Files app under "On My iPhone").
+/// Returns the absolute path of the copied file as an NSString, matching the
+/// Android plugin which returns the saved path string.
+- (void)handleSaveFileToDownloads:(FlutterMethodCall *)call result:(FlutterResult)result {
+    NSString *filePath = call.arguments[@"path"];
+    if (!filePath || [filePath isEqual:[NSNull null]]) {
+        result([FlutterError errorWithCode:@"INVALID_ARG"
+                                   message:@"Missing 'path' argument"
+                                   details:nil]);
+        return;
+    }
+
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if (![fm fileExistsAtPath:filePath]) {
+        result([FlutterError errorWithCode:@"FILE_NOT_FOUND"
+                                   message:@"File not found"
+                                   details:filePath]);
+        return;
+    }
+
+    NSArray<NSString *> *paths = NSSearchPathForDirectoriesInDomains(
+        NSDocumentDirectory, NSUserDomainMask, YES);
+    NSString *documentsDir = paths.firstObject;
+    if (!documentsDir) {
+        result([FlutterError errorWithCode:@"NO_DOCUMENTS_DIR"
+                                   message:@"Could not resolve Documents directory"
+                                   details:nil]);
+        return;
+    }
+
+    // Optional override filename, otherwise use source file's basename.
+    NSString *fileName = call.arguments[@"fileName"];
+    if (!fileName || [fileName isEqual:[NSNull null]] || fileName.length == 0) {
+        fileName = [filePath lastPathComponent];
+    }
+    NSString *destPath = [documentsDir stringByAppendingPathComponent:fileName];
+
+    NSError *error = nil;
+    if ([fm fileExistsAtPath:destPath]) {
+        [fm removeItemAtPath:destPath error:&error];
+        if (error) {
+            result([FlutterError errorWithCode:@"SAVE_FAILED"
+                                       message:error.localizedDescription
+                                       details:nil]);
+            return;
+        }
+    }
+
+    if (![fm copyItemAtPath:filePath toPath:destPath error:&error]) {
+        result([FlutterError errorWithCode:@"SAVE_FAILED"
+                                   message:error.localizedDescription ?: @"Copy failed"
+                                   details:nil]);
+        return;
+    }
+
+    result(destPath);
+}
+
+#pragma mark - Device Info
+
+/// Return the raw machine identifier (e.g. "iPhone15,3", "iPad14,1").
+- (void)handleGetDeviceModel:(FlutterResult)result {
+    struct utsname systemInfo;
+    if (uname(&systemInfo) != 0) {
+        result([UIDevice currentDevice].model ?: @"");
+        return;
+    }
+    NSString *machine = [NSString stringWithCString:systemInfo.machine
+                                            encoding:NSUTF8StringEncoding];
+    result(machine ?: ([UIDevice currentDevice].model ?: @""));
+}
+
+/// Look up the SoC name from the machine identifier (utsname.machine).
+/// Returns the marketing chip name (e.g. "Apple A17 Pro") when known,
+/// otherwise the raw identifier so callers always receive a usable string.
+- (void)handleGetChipName:(FlutterResult)result {
+    struct utsname systemInfo;
+    if (uname(&systemInfo) != 0) {
+        result(@"Apple Silicon");
+        return;
+    }
+    NSString *machine = [NSString stringWithCString:systemInfo.machine
+                                            encoding:NSUTF8StringEncoding] ?: @"";
+
+    NSString *chip = [self chipNameForMachine:machine];
+    result(chip);
+}
+
+/// Map iOS machine identifier prefixes to SoC marketing names.
+/// Unknown identifiers return the raw machine string (per task spec).
+- (NSString *)chipNameForMachine:(NSString *)machine {
+    if (machine.length == 0) return @"Apple Silicon";
+
+    // Simulator: forward through to the host arch identifier.
+    if ([machine isEqualToString:@"x86_64"] || [machine isEqualToString:@"i386"]) {
+        return @"Simulator (x86_64)";
+    }
+    if ([machine isEqualToString:@"arm64"]) {
+        return @"Simulator (arm64)";
+    }
+
+    // iPhone — model-to-SoC table. Sources: Apple specs, theiphonewiki.
+    static NSDictionary<NSString *, NSString *> *table;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        table = @{
+            // iPhone — A-series
+            @"iPhone10,1": @"Apple A11 Bionic",  // iPhone 8
+            @"iPhone10,4": @"Apple A11 Bionic",  // iPhone 8
+            @"iPhone10,2": @"Apple A11 Bionic",  // iPhone 8 Plus
+            @"iPhone10,5": @"Apple A11 Bionic",  // iPhone 8 Plus
+            @"iPhone10,3": @"Apple A11 Bionic",  // iPhone X
+            @"iPhone10,6": @"Apple A11 Bionic",  // iPhone X
+            @"iPhone11,2": @"Apple A12 Bionic",  // iPhone XS
+            @"iPhone11,4": @"Apple A12 Bionic",  // iPhone XS Max
+            @"iPhone11,6": @"Apple A12 Bionic",  // iPhone XS Max
+            @"iPhone11,8": @"Apple A12 Bionic",  // iPhone XR
+            @"iPhone12,1": @"Apple A13 Bionic",  // iPhone 11
+            @"iPhone12,3": @"Apple A13 Bionic",  // iPhone 11 Pro
+            @"iPhone12,5": @"Apple A13 Bionic",  // iPhone 11 Pro Max
+            @"iPhone12,8": @"Apple A13 Bionic",  // iPhone SE 2nd gen
+            @"iPhone13,1": @"Apple A14 Bionic",  // iPhone 12 mini
+            @"iPhone13,2": @"Apple A14 Bionic",  // iPhone 12
+            @"iPhone13,3": @"Apple A14 Bionic",  // iPhone 12 Pro
+            @"iPhone13,4": @"Apple A14 Bionic",  // iPhone 12 Pro Max
+            @"iPhone14,2": @"Apple A15 Bionic",  // iPhone 13 Pro
+            @"iPhone14,3": @"Apple A15 Bionic",  // iPhone 13 Pro Max
+            @"iPhone14,4": @"Apple A15 Bionic",  // iPhone 13 mini
+            @"iPhone14,5": @"Apple A15 Bionic",  // iPhone 13
+            @"iPhone14,6": @"Apple A15 Bionic",  // iPhone SE 3rd gen
+            @"iPhone14,7": @"Apple A15 Bionic",  // iPhone 14
+            @"iPhone14,8": @"Apple A15 Bionic",  // iPhone 14 Plus
+            @"iPhone15,2": @"Apple A16 Bionic",  // iPhone 14 Pro
+            @"iPhone15,3": @"Apple A16 Bionic",  // iPhone 14 Pro Max
+            @"iPhone15,4": @"Apple A16 Bionic",  // iPhone 15
+            @"iPhone15,5": @"Apple A16 Bionic",  // iPhone 15 Plus
+            @"iPhone16,1": @"Apple A17 Pro",     // iPhone 15 Pro
+            @"iPhone16,2": @"Apple A17 Pro",     // iPhone 15 Pro Max
+            @"iPhone17,1": @"Apple A18 Pro",     // iPhone 16 Pro
+            @"iPhone17,2": @"Apple A18 Pro",     // iPhone 16 Pro Max
+            @"iPhone17,3": @"Apple A18",         // iPhone 16
+            @"iPhone17,4": @"Apple A18",         // iPhone 16 Plus
+            @"iPhone17,5": @"Apple A18",         // iPhone 16e
+
+            // iPad — A-series and M-series
+            @"iPad7,11": @"Apple A10 Fusion",    // iPad 7
+            @"iPad7,12": @"Apple A10 Fusion",
+            @"iPad11,1": @"Apple A12 Bionic",    // iPad mini 5
+            @"iPad11,2": @"Apple A12 Bionic",
+            @"iPad11,3": @"Apple A12 Bionic",    // iPad Air 3
+            @"iPad11,4": @"Apple A12 Bionic",
+            @"iPad11,6": @"Apple A12 Bionic",    // iPad 8
+            @"iPad11,7": @"Apple A12 Bionic",
+            @"iPad12,1": @"Apple A13 Bionic",    // iPad 9
+            @"iPad12,2": @"Apple A13 Bionic",
+            @"iPad13,1": @"Apple A14 Bionic",    // iPad Air 4
+            @"iPad13,2": @"Apple A14 Bionic",
+            @"iPad13,4": @"Apple M1",            // iPad Pro 11" 3rd gen
+            @"iPad13,5": @"Apple M1",
+            @"iPad13,6": @"Apple M1",
+            @"iPad13,7": @"Apple M1",
+            @"iPad13,8": @"Apple M1",            // iPad Pro 12.9" 5th gen
+            @"iPad13,9": @"Apple M1",
+            @"iPad13,10": @"Apple M1",
+            @"iPad13,11": @"Apple M1",
+            @"iPad13,16": @"Apple M1",           // iPad Air 5
+            @"iPad13,17": @"Apple M1",
+            @"iPad13,18": @"Apple A14 Bionic",   // iPad 10
+            @"iPad13,19": @"Apple A14 Bionic",
+            @"iPad14,1": @"Apple A15 Bionic",    // iPad mini 6
+            @"iPad14,2": @"Apple A15 Bionic",
+            @"iPad14,3": @"Apple M2",            // iPad Pro 11" 4th gen
+            @"iPad14,4": @"Apple M2",
+            @"iPad14,5": @"Apple M2",            // iPad Pro 12.9" 6th gen
+            @"iPad14,6": @"Apple M2",
+            @"iPad14,8": @"Apple M2",            // iPad Air 11" M2
+            @"iPad14,9": @"Apple M2",
+            @"iPad14,10": @"Apple M2",           // iPad Air 13" M2
+            @"iPad14,11": @"Apple M2",
+            @"iPad15,3": @"Apple A16",           // iPad 11
+            @"iPad15,4": @"Apple A16",
+            @"iPad15,5": @"Apple A16",
+            @"iPad15,6": @"Apple A16",
+            @"iPad16,1": @"Apple A17 Pro",       // iPad mini 7
+            @"iPad16,2": @"Apple A17 Pro",
+            @"iPad16,3": @"Apple M4",            // iPad Pro 11" M4
+            @"iPad16,4": @"Apple M4",
+            @"iPad16,5": @"Apple M4",            // iPad Pro 13" M4
+            @"iPad16,6": @"Apple M4",
+        };
+    });
+
+    NSString *known = table[machine];
+    if (known) return known;
+
+    // Unknown identifier: return raw machine string per task spec.
+    return machine;
+}
+
+/// Total physical RAM in bytes via sysctl(hw.memsize). Returns 0 on failure.
+- (void)handleGetTotalMemory:(FlutterResult)result {
+    int64_t memsize = 0;
+    size_t size = sizeof(memsize);
+    if (sysctlbyname("hw.memsize", &memsize, &size, NULL, 0) != 0) {
+        result(@(0));
+        return;
+    }
+    result(@(memsize));
+}
+
+/// True if the device has an Apple Neural Engine (A11 Bionic / 2017 iPhone 8 and later).
+/// Detection: machine identifier prefix iPhoneN,M with N >= 10, plus iPad models with A12+.
+- (void)handleHasNeuralEngine:(FlutterResult)result {
+    struct utsname systemInfo;
+    if (uname(&systemInfo) != 0) {
+        // Conservative fallback: iOS 13+ minimum deployment target means
+        // anything currently running this build supports A12+ (all have ANE).
+        result(@(YES));
+        return;
+    }
+    NSString *machine = [NSString stringWithCString:systemInfo.machine
+                                            encoding:NSUTF8StringEncoding] ?: @"";
+
+    // Simulator: assume yes (host is presumably modern).
+    if ([machine isEqualToString:@"x86_64"] ||
+        [machine isEqualToString:@"i386"] ||
+        [machine isEqualToString:@"arm64"]) {
+        result(@(YES));
+        return;
+    }
+
+    // iPhone10,x and later (A11 Bionic +) all have ANE.
+    if ([machine hasPrefix:@"iPhone"]) {
+        NSString *suffix = [machine substringFromIndex:@"iPhone".length];
+        NSInteger major = [suffix integerValue];
+        result(@(major >= 10));
+        return;
+    }
+
+    // iPad: ANE arrived with A12 Bionic. iPad11,x (iPad mini 5 / iPad Air 3) and later.
+    if ([machine hasPrefix:@"iPad"]) {
+        NSString *suffix = [machine substringFromIndex:@"iPad".length];
+        NSInteger major = [suffix integerValue];
+        result(@(major >= 11));
+        return;
+    }
+
+    // iPod / unknown: no.
+    result(@(NO));
+}
+
+/// GPU backend label. iOS uses Metal universally on supported devices.
+- (void)handleGetGpuBackend:(FlutterResult)result {
+    result(@"Metal");
 }
 
 #pragma mark - Voice Pipeline Audio Session

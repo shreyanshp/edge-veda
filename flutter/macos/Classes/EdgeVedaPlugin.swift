@@ -381,9 +381,113 @@ public class EdgeVedaPlugin: NSObject, FlutterPlugin {
             result(true)
         case "tts_voices":
             result(ttsHandler?.availableVoices() ?? [])
+        case "getDeviceModel":
+            handleGetDeviceModel(result)
+        case "getChipName":
+            handleGetChipName(result)
+        case "getTotalMemory":
+            handleGetTotalMemory(result)
+        case "hasNeuralEngine":
+            handleHasNeuralEngine(result)
+        case "getGpuBackend":
+            handleGetGpuBackend(result)
         default:
             result(FlutterMethodNotImplemented)
         }
+    }
+
+    // MARK: - Device Info (parity with Android / iOS)
+
+    /// Read a string from sysctlbyname. Returns nil on failure.
+    private func sysctlString(_ name: String) -> String? {
+        var size: size_t = 0
+        if sysctlbyname(name, nil, &size, nil, 0) != 0 || size == 0 {
+            return nil
+        }
+        var buf = [CChar](repeating: 0, count: size)
+        if sysctlbyname(name, &buf, &size, nil, 0) != 0 {
+            return nil
+        }
+        return String(cString: buf)
+    }
+
+    /// Read an Int64 from sysctlbyname. Returns 0 on failure.
+    private func sysctlInt64(_ name: String) -> Int64 {
+        var value: Int64 = 0
+        var size = MemoryLayout<Int64>.size
+        if sysctlbyname(name, &value, &size, nil, 0) != 0 {
+            return 0
+        }
+        return value
+    }
+
+    /// Read the host CPU architecture (e.g. "arm64", "x86_64").
+    private func machineArch() -> String {
+        var info = utsname()
+        if uname(&info) != 0 {
+            return ""
+        }
+        let mirror = Mirror(reflecting: info.machine)
+        let bytes = mirror.children.compactMap { $0.value as? CChar }
+        return String(cString: bytes + [0])
+    }
+
+    /// Return the raw hardware model identifier (e.g. "MacBookPro18,1", "Mac14,2").
+    private func handleGetDeviceModel(_ result: FlutterResult) {
+        if let model = sysctlString("hw.model") {
+            result(model)
+        } else {
+            result(machineArch())
+        }
+    }
+
+    /// Return the SoC name. Apple Silicon: prefer brand_string from sysctl
+    /// (e.g. "Apple M1 Pro"). Intel: brand_string returns the Intel CPU
+    /// marketing name. Falls back to the raw machine arch if both fail.
+    private func handleGetChipName(_ result: FlutterResult) {
+        // machdep.cpu.brand_string works on both Intel and Apple Silicon and
+        // returns a human-readable name (e.g. "Apple M3 Max" or
+        // "Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz").
+        if let brand = sysctlString("machdep.cpu.brand_string"), !brand.isEmpty {
+            result(brand)
+            return
+        }
+
+        // Fallback for Apple Silicon when brand_string is unavailable: use
+        // hw.targettype which returns codenames like "j274" — not pretty,
+        // but better than empty string.
+        if let target = sysctlString("hw.targettype"), !target.isEmpty {
+            result("Apple Silicon (\(target))")
+            return
+        }
+
+        let arch = machineArch()
+        if arch == "arm64" {
+            result("Apple Silicon")
+        } else if !arch.isEmpty {
+            result(arch)
+        } else {
+            result("Unknown")
+        }
+    }
+
+    /// Total physical RAM in bytes via sysctl(hw.memsize). Returns 0 on failure.
+    private func handleGetTotalMemory(_ result: FlutterResult) {
+        let memsize = sysctlInt64("hw.memsize")
+        result(memsize)
+    }
+
+    /// True on Apple Silicon (M-series include a Neural Engine), false on Intel.
+    /// Detection via uname().machine == "arm64".
+    private func handleHasNeuralEngine(_ result: FlutterResult) {
+        let arch = machineArch()
+        result(arch == "arm64")
+    }
+
+    /// GPU backend label. macOS uses Metal universally on Apple Silicon and
+    /// modern Intel Macs (deployment target 11+ requires Metal-capable GPU).
+    private func handleGetGpuBackend(_ result: FlutterResult) {
+        result("Metal")
     }
 
     // MARK: - Voice Pipeline Audio Session
