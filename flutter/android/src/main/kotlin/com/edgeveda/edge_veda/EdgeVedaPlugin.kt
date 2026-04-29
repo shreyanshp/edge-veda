@@ -11,6 +11,7 @@ import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.database.Cursor
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.net.Uri
@@ -292,6 +293,10 @@ class EdgeVedaPlugin : FlutterPlugin, ComponentCallbacks2, MethodChannel.MethodC
                 result.success(ttsStreamHandler?.getVoices() ?: emptyList<Map<String, Any>>())
             }
 
+            // --- Voice pipeline audio session (parity with iOS/macOS) ---
+            "configureVoicePipelineAudio" -> result.success(configureVoicePipelineAudio())
+            "resetAudioSession" -> result.success(resetAudioSession())
+
             // --- SpeechRecognizer methods (3) ---
             "speechRecognizer_isAvailable" -> {
                 val ctx = applicationContext
@@ -390,6 +395,73 @@ class EdgeVedaPlugin : FlutterPlugin, ComponentCallbacks2, MethodChannel.MethodC
         val pm = applicationContext?.getSystemService(Context.POWER_SERVICE) as? PowerManager
             ?: return false
         return pm.isPowerSaveMode
+    }
+
+    // =========================================================================
+    // Voice pipeline audio session (parity with iOS / macOS)
+    // =========================================================================
+
+    // Tracks the speakerphone state we observed before configuring, so
+    // resetAudioSession() can put it back the way we found it.
+    private var savedSpeakerphoneOn: Boolean? = null
+
+    /**
+     * Configure audio routing for the voice pipeline.
+     *
+     * iOS sets AVAudioSession to playAndRecord with speaker default + bluetooth
+     * and a low-latency buffer. On Android, low-latency buffering is configured
+     * at the AudioRecord layer (see AudioCaptureStreamHandler), and most
+     * routing is already correct for MediaRecorder.AudioSource.MIC. We only
+     * nudge speakerphone on if no Bluetooth SCO/A2DP route is active, to
+     * match iOS's "defaultToSpeaker" behavior without hijacking a headset.
+     *
+     * Returns true on success, false if AudioManager is unavailable.
+     */
+    private fun configureVoicePipelineAudio(): Boolean {
+        val ctx = applicationContext ?: return false
+        val am = ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return false
+        return try {
+            // Be conservative: if user is on Bluetooth headset, don't override.
+            val onBluetooth = am.isBluetoothScoOn || am.isBluetoothA2dpOn ||
+                    am.isWiredHeadsetOn
+            if (savedSpeakerphoneOn == null) {
+                savedSpeakerphoneOn = am.isSpeakerphoneOn
+            }
+            if (!onBluetooth && !am.isSpeakerphoneOn) {
+                am.isSpeakerphoneOn = true
+            }
+            Log.d(TAG, "configureVoicePipelineAudio: speakerphoneOn=${am.isSpeakerphoneOn}, bt=$onBluetooth")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "configureVoicePipelineAudio failed", e)
+            false
+        }
+    }
+
+    /**
+     * Reset audio routing to whatever we observed before
+     * configureVoicePipelineAudio() ran. iOS deactivates and reactivates the
+     * AVAudioSession; Android has no equivalent global session, so we restore
+     * the speakerphone flag and let the AudioRecord/AudioTrack lifecycle
+     * handle the rest.
+     *
+     * Returns true on success, false if AudioManager is unavailable.
+     */
+    private fun resetAudioSession(): Boolean {
+        val ctx = applicationContext ?: return false
+        val am = ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return false
+        return try {
+            val prior = savedSpeakerphoneOn
+            if (prior != null && am.isSpeakerphoneOn != prior) {
+                am.isSpeakerphoneOn = prior
+            }
+            savedSpeakerphoneOn = null
+            Log.d(TAG, "resetAudioSession: restored speakerphoneOn=${am.isSpeakerphoneOn}")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "resetAudioSession failed", e)
+            false
+        }
     }
 
     // =========================================================================
