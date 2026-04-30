@@ -121,15 +121,15 @@ dependencies {
 // will fail loudly if a mismatch is found.
 ext.expectedJniLibHashes = [
     'arm64-v8a'  : [
-        'libedge_veda.so'  : '133254af5ab3a72604ac0ae0b2272a89ed2bd57371648f59ec573afc315a5dbe',
+        'libedge_veda.so'  : 'a0d2fe6710575179626d5368c393b10bcb1db60d57451e51d08bde52c2157ae5',
         'libc++_shared.so' : 'ab4e6c71b96b851de45a8a9bd86369e7dbc2130a44b3b4520564be94847910f2',
     ],
     'armeabi-v7a': [
-        'libedge_veda.so'  : '181f20cde4b3f235e56a0e417c70b582e07b8262f1a908362b2119761fbc7244',
+        'libedge_veda.so'  : 'a6056141ec5b16f9f2e35d113b8c13eae6a81624a1064c6dee09f1f6f60799ff',
         'libc++_shared.so' : '10ee48131d6742899619f7cfb3b8df150ad787d723c766a3fb80d4bb275711ff',
     ],
     'x86_64'     : [
-        'libedge_veda.so'  : '018be7f410bb7641875141bf12f230c1c6c39437492d37fa2a26931fcea91bf2',
+        'libedge_veda.so'  : '8115d832d857f3b840153a33bdb7de84c8fa2559ed50f558ab50093f9ee4b5cc',
         'libc++_shared.so' : 'e4cd73c8a3607269f3be58d15c21f78bff112e27f9398d6261e5f965668f8746',
     ],
 ]
