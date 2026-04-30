@@ -18,6 +18,7 @@
 
 // Platform-specific includes
 #if defined(__APPLE__)
+    #include <TargetConditionals.h>
     #include <mach/mach.h>
     #include <mach/task_info.h>
     #include <sys/sysctl.h>
@@ -575,26 +576,51 @@ size_t memory_guard_get_recommended_limit() {
     }
 
 #if defined(__ANDROID__)
-    // Android LMK is more aggressive than iOS jetsam
-    // On 4GB devices, background apps get killed around 1GB foreground app usage
-    // Use 800MB as conservative default (per v1.1 research)
-    constexpr size_t ANDROID_DEFAULT_LIMIT = 800 * 1024 * 1024; // 800MB
-
-    // If device has lots of RAM (12GB+), allow more
-    // Cast to uint64_t for correct comparison on 32-bit ARM (armeabi-v7a)
+    // Android LMK is more aggressive than iOS jetsam — on 4 GB devices
+    // background apps start dying around 1 GB foreground app usage.
+    // Bump the ceiling on flagship-class hardware so chat + STT + vision
+    // can coexist without memory_guard's LRU monitor flipping one of
+    // them out from under us. 16 GB+ devices (Galaxy S24 Ultra, Pixel 9
+    // Pro XL) get the most generous limit; 4-6 GB Android Go devices
+    // stay at the conservative v1.1 default.
     uint64_t total64 = static_cast<uint64_t>(total);
-    if (total64 >= 12ULL * 1024 * 1024 * 1024) {
-        return 1200 * 1024 * 1024; // 1.2GB on flagship devices
+    if (total64 >= 16ULL * 1024 * 1024 * 1024) {
+        return static_cast<size_t>(3.5 * 1024 * 1024 * 1024); // 3.5 GB on 16 GB+
+    } else if (total64 >= 12ULL * 1024 * 1024 * 1024) {
+        return static_cast<size_t>(2.5 * 1024 * 1024 * 1024); // 2.5 GB on 12 GB
     } else if (total64 >= 8ULL * 1024 * 1024 * 1024) {
-        return 1000 * 1024 * 1024; // 1GB on 8GB devices
+        return 1800 * 1024 * 1024; // 1.8 GB on 8 GB
     } else {
-        return ANDROID_DEFAULT_LIMIT; // 800MB on 4-6GB devices
+        return 800 * 1024 * 1024;  // 800 MB on 4-6 GB (v1.1 default)
     }
 #elif defined(__APPLE__)
-    // iOS: Use 1.2GB default (validated in v1.0)
-    // This is more generous because iOS jetsam warnings give time to react
-    constexpr size_t IOS_DEFAULT_LIMIT = 1200 * 1024 * 1024; // 1.2GB
-    return IOS_DEFAULT_LIMIT;
+  #if TARGET_OS_OSX
+    // macOS desktops have abundant RAM (8 GB minimum, 16-128 GB on
+    // M-series). The 1.2 GB iOS default starves any multi-engine
+    // workload — chat + Whisper combined easily passes 1.2 GB and
+    // memory_guard's LRU monitor would then flip the second engine's
+    // `model_loaded = false`, causing every subsequent transcribe to
+    // return EV_ERROR_CONTEXT_INVALID. Use 60% of total like other
+    // desktops; jetsam doesn't apply to macOS apps.
+    return static_cast<size_t>(total * 0.6);
+  #else
+    // iOS: scale with installed RAM so flagship phones can run a
+    // chat + STT + vision pipeline without LRU-evicting one of them.
+    // iPhone hardware spread (2026): iPhone SE 2nd gen ~3 GB, iPhone
+    // 13 ~4 GB, iPhone 14 ~6 GB, iPhone 15 Pro 8 GB, iPhone 16 Pro
+    // 12 GB. Jetsam still bites under multi-app pressure so cap
+    // hard at 4 GB regardless of device RAM.
+    uint64_t total64 = static_cast<uint64_t>(total);
+    if (total64 >= 12ULL * 1024 * 1024 * 1024) {
+        return static_cast<size_t>(3.5 * 1024 * 1024 * 1024); // 3.5 GB on 12 GB+
+    } else if (total64 >= 8ULL * 1024 * 1024 * 1024) {
+        return static_cast<size_t>(2.5 * 1024 * 1024 * 1024); // 2.5 GB on 8 GB
+    } else if (total64 >= 6ULL * 1024 * 1024 * 1024) {
+        return 1800 * 1024 * 1024; // 1.8 GB on 6 GB
+    }
+    // 1.2 GB on 4 GB devices (validated in v1.0) and below.
+    return 1200 * 1024 * 1024;
+  #endif
 #else
     // Desktop: Use 60% of total memory
     return static_cast<size_t>(total * 0.6);

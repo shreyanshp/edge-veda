@@ -121,7 +121,7 @@ dependencies {
 // will fail loudly if a mismatch is found.
 ext.expectedJniLibHashes = [
     'arm64-v8a'  : [
-        'libedge_veda.so'  : 'a0d2fe6710575179626d5368c393b10bcb1db60d57451e51d08bde52c2157ae5',
+        'libedge_veda.so'  : '2ced10ff841f2c2dee128e2799374bb1c8bcbceafe9f514cf0efd6d78a641706',
         'libc++_shared.so' : 'ab4e6c71b96b851de45a8a9bd86369e7dbc2130a44b3b4520564be94847910f2',
     ],
     'armeabi-v7a': [
@@ -129,7 +129,7 @@ ext.expectedJniLibHashes = [
         'libc++_shared.so' : '10ee48131d6742899619f7cfb3b8df150ad787d723c766a3fb80d4bb275711ff',
     ],
     'x86_64'     : [
-        'libedge_veda.so'  : '8115d832d857f3b840153a33bdb7de84c8fa2559ed50f558ab50093f9ee4b5cc',
+        'libedge_veda.so'  : '2b745e54101e1e7e72354e4744528b393cc3677c0150501d0ba6100044709417',
         'libc++_shared.so' : 'e4cd73c8a3607269f3be58d15c21f78bff112e27f9398d6261e5f965668f8746',
     ],
 ]
