@@ -394,11 +394,49 @@ ev_error_t ev_vision_describe(
         return EV_ERROR_OUT_OF_MEMORY;
     }
 
-    // Step 2: Build prompt with media marker
+    // Step 2: Build prompt with media marker.
+    //
     // The prompt format must include the media marker where the image goes.
-    // We prepend the marker so the model sees the image first, then the question.
+    // Two cases:
+    //
+    //   (a) Bare prompt — caller passed plain instruction text. We prepend
+    //       the marker so the image is seen first.
+    //
+    //   (b) Chat-templated prompt — caller already wrapped the instruction
+    //       in `<start_of_turn>user\n…<end_of_turn>\n<start_of_turn>model\n`
+    //       (Gemma) or `<|im_start|>user\n…<|im_end|>\n<|im_start|>assistant\n`
+    //       (ChatML / Qwen-VL / SmolVLM2). For (b), prepending the marker
+    //       leaves the image OUTSIDE the user turn and the model still
+    //       generates, but the alignment is wrong. We splice the marker
+    //       just after the user-turn opener so the image lives inside the
+    //       same turn the instruction does — what every chat-template VLM
+    //       expects.
+    //
+    // Without ANY chat template (case a + Gemma family), the model emits
+    // `<end_of_turn>` on the very first sample because nothing told it a
+    // user turn just ended — describeFrame returns empty and the caller
+    // sees an empty description. The Dart layer (`_vision_caption.dart`)
+    // now always wraps Gemma/ChatML prompts before this entry, so we hit
+    // case (b) for those families and case (a) only for unknown models.
     const char* marker = mtmd_default_marker();
-    std::string full_prompt = std::string(marker) + "\n" + prompt;
+    std::string full_prompt;
+    auto splice_marker = [&](const std::string& src,
+                             const std::string& opener) -> bool {
+        const size_t pos = src.find(opener);
+        if (pos == std::string::npos) return false;
+        const size_t insert_at = pos + opener.size();
+        full_prompt = src.substr(0, insert_at)
+                    + std::string(marker) + "\n"
+                    + src.substr(insert_at);
+        return true;
+    };
+    if (!splice_marker(prompt, "<start_of_turn>user\n") &&
+        !splice_marker(prompt, "<|im_start|>user\n")) {
+        // No recognized chat template — fall back to original behavior so
+        // any model architecture we haven't accounted for still functions
+        // (it just may emit empty for chat-trained VLMs without a wrap).
+        full_prompt = std::string(marker) + "\n" + prompt;
+    }
 
     // Step 3: Tokenize prompt + image via mtmd
     mtmd_input_chunks* chunks = mtmd_input_chunks_init();
