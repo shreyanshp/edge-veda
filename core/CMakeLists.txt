@@ -16,6 +16,10 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Android")
     set(ANDROID TRUE)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     set(MACOS TRUE)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    set(WINDOWS TRUE)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(LINUX TRUE)
 endif()
 
 # Backend options - compute default values first
@@ -24,9 +28,18 @@ if(IOS OR MACOS)
 else()
     set(METAL_DEFAULT OFF)
 endif()
+# Default Vulkan ON for Windows / Linux (covers NVIDIA + AMD + Intel
+# without vendor-specific SKUs). Host apps that prefer CUDA pass
+# `-DEDGE_VEDA_ENABLE_VULKAN=OFF -DEDGE_VEDA_ENABLE_CUDA=ON`.
+if(WINDOWS OR LINUX)
+    set(VULKAN_DEFAULT ON)
+else()
+    set(VULKAN_DEFAULT OFF)
+endif()
 
 option(EDGE_VEDA_ENABLE_METAL "Enable Metal backend for iOS/macOS" ${METAL_DEFAULT})
-option(EDGE_VEDA_ENABLE_VULKAN "Enable Vulkan backend for Android" OFF)  # Phase 5: CPU-only, Vulkan deferred to Phase 7
+option(EDGE_VEDA_ENABLE_VULKAN "Enable Vulkan backend (Android/Windows/Linux)" ${VULKAN_DEFAULT})
+option(EDGE_VEDA_ENABLE_CUDA "Enable CUDA backend (Windows/Linux NVIDIA only)" OFF)
 option(EDGE_VEDA_ENABLE_CPU "Enable CPU backend (always available)" ON)
 option(EDGE_VEDA_BUILD_SHARED "Build shared library" ON)
 option(EDGE_VEDA_BUILD_STATIC "Build static library" OFF)
@@ -72,6 +85,31 @@ elseif(MACOS)
         find_library(METAL_FRAMEWORK Metal REQUIRED)
         find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
     endif()
+elseif(WINDOWS)
+    # Windows / MSVC settings.
+    # Suppress the noise from third_party C code that uses POSIX
+    # function names (strcpy, fopen, etc) on MSVC. llama.cpp already
+    # silences these internally; do it for our src/ tree too.
+    add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
+    add_compile_definitions(_CRT_NONSTDC_NO_DEPRECATE)
+    # Allow exceptions in our code (third_party trees may throw).
+    add_compile_options(/EHsc)
+    if(EDGE_VEDA_ENABLE_VULKAN)
+        find_package(Vulkan REQUIRED)
+    endif()
+    if(EDGE_VEDA_ENABLE_CUDA)
+        find_package(CUDAToolkit REQUIRED)
+    endif()
+elseif(LINUX)
+    # Linux desktop — primarily exists so CI can verify the Vulkan
+    # path before flipping it on for Windows. Shares most of the
+    # GGML config with the Windows branch below.
+    if(EDGE_VEDA_ENABLE_VULKAN)
+        find_package(Vulkan REQUIRED)
+    endif()
+    if(EDGE_VEDA_ENABLE_CUDA)
+        find_package(CUDAToolkit REQUIRED)
+    endif()
 endif()
 
 # Source files
@@ -100,6 +138,34 @@ endif()
 
 if(EDGE_VEDA_ENABLE_CPU)
     add_compile_definitions(EDGE_VEDA_CPU_ENABLED)
+endif()
+
+# Windows / Linux desktop llama.cpp configuration (BEFORE add_subdirectory).
+# Unlike mobile, x86_64 SIMD is fair game — every consumer CPU since
+# Haswell (2013) ships AVX2 + F16C + FMA. Keep AVX-512 off (server
+# class only and adds binary bloat).
+if(WINDOWS OR LINUX)
+    if(EDGE_VEDA_ENABLE_VULKAN)
+        set(GGML_VULKAN ON CACHE BOOL "" FORCE)
+    else()
+        set(GGML_VULKAN OFF CACHE BOOL "" FORCE)
+    endif()
+    if(EDGE_VEDA_ENABLE_CUDA)
+        set(GGML_CUDA ON CACHE BOOL "" FORCE)
+    else()
+        set(GGML_CUDA OFF CACHE BOOL "" FORCE)
+    endif()
+    set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
+    set(GGML_AVX ON CACHE BOOL "" FORCE)
+    set(GGML_AVX2 ON CACHE BOOL "" FORCE)
+    set(GGML_F16C ON CACHE BOOL "" FORCE)
+    set(GGML_FMA ON CACHE BOOL "" FORCE)
+    set(GGML_AVX512 OFF CACHE BOOL "" FORCE)
+    set(GGML_AVX512_VBMI OFF CACHE BOOL "" FORCE)
+    set(GGML_AVX512_VNNI OFF CACHE BOOL "" FORCE)
+    # OpenMP via MSVC isn't worth the link complexity; ggml's internal
+    # thread pool is fine here.
+    set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
 endif()
 
 # Android-specific llama.cpp configuration (BEFORE add_subdirectory)
@@ -314,10 +380,33 @@ function(configure_edge_veda_target target_name)
             -Wl,-z,max-page-size=16384
             -Wl,-z,common-page-size=16384
         )
+    elseif(WINDOWS)
+        if(EDGE_VEDA_ENABLE_VULKAN)
+            target_link_libraries(${target_name} PRIVATE Vulkan::Vulkan)
+            target_compile_definitions(${target_name} PRIVATE
+                EDGE_VEDA_VULKAN_LINKED)
+        endif()
+        if(EDGE_VEDA_ENABLE_CUDA)
+            target_link_libraries(${target_name} PRIVATE
+                CUDA::cudart CUDA::cublas)
+            target_compile_definitions(${target_name} PRIVATE
+                EDGE_VEDA_CUDA_LINKED)
+        endif()
     elseif(UNIX)
-        # Linux needs pthread for threading
+        # Linux desktop needs pthread + Vulkan/CUDA links similar to Windows.
         find_package(Threads REQUIRED)
         target_link_libraries(${target_name} PRIVATE Threads::Threads)
+        if(EDGE_VEDA_ENABLE_VULKAN AND LINUX)
+            target_link_libraries(${target_name} PRIVATE Vulkan::Vulkan)
+            target_compile_definitions(${target_name} PRIVATE
+                EDGE_VEDA_VULKAN_LINKED)
+        endif()
+        if(EDGE_VEDA_ENABLE_CUDA AND LINUX)
+            target_link_libraries(${target_name} PRIVATE
+                CUDA::cudart CUDA::cublas)
+            target_compile_definitions(${target_name} PRIVATE
+                EDGE_VEDA_CUDA_LINKED)
+        endif()
     endif()
 
     # Compiler warnings

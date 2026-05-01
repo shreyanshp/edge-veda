@@ -1,6 +1,8 @@
 #ifndef FLUTTER_PLUGIN_EDGE_VEDA_PLUGIN_H_
 #define FLUTTER_PLUGIN_EDGE_VEDA_PLUGIN_H_
 
+#include <flutter/event_channel.h>
+#include <flutter/event_stream_handler_functions.h>
 #include <flutter/method_channel.h>
 #include <flutter/plugin_registrar_windows.h>
 
@@ -8,35 +10,39 @@
 
 namespace edge_veda {
 
-// Edge Veda Windows plugin shell.
+// Edge Veda Windows plugin.
 //
-// This first commit registers the `com.edgeveda.edge_veda/main` method
-// channel and returns `UNAVAILABLE` for every call so the host Flutter
-// app builds and links cleanly on Windows. The full surface — chat
-// streaming, vision describe, Whisper STT, model lifecycle, telemetry,
-// audio capture EventChannel, thermal state EventChannel — needs to be
-// ported from `flutter/macos/Classes/EdgeVedaPlugin.swift` and is
-// tracked separately from the issue #574 (mobile-news) Phase 4 PR.
-//
-// The host app gates AI surfaces on
-// `PlatformCapabilities.edgeVedaAvailable`, which currently returns
-// false on Windows; flip that flag once the methods listed above
-// produce real results on Windows.
+// Mirrors the Apple platform feature set in flutter/macos/Classes/
+// EdgeVedaPlugin.swift via Win32 + WinRT equivalents. The Dart side
+// (lib/src/edge_veda_impl.dart, lib/src/whisper_session.dart,
+// lib/src/tts_service.dart, lib/src/voice_pipeline.dart, ...) calls
+// the same method channels — `com.edgeveda.edge_veda/{telemetry,
+// thermal, audio_capture, tts_events}` — and gets the same wire shape
+// back regardless of platform. Where a feature is fundamentally
+// macOS-specific (photo library insights, calendar insights, detective
+// permissions) the Windows handler returns `UNAVAILABLE` and the Dart
+// caller treats the feature as off — the host app already gates these
+// at higher levels.
 class EdgeVedaPlugin : public flutter::Plugin {
  public:
-  static void RegisterWithRegistrar(flutter::PluginRegistrarWindows* registrar);
+  static void RegisterWithRegistrar(
+      flutter::PluginRegistrarWindows* registrar);
 
   EdgeVedaPlugin();
-  virtual ~EdgeVedaPlugin();
+  ~EdgeVedaPlugin() override;
 
-  // Disallow copy and assign.
   EdgeVedaPlugin(const EdgeVedaPlugin&) = delete;
   EdgeVedaPlugin& operator=(const EdgeVedaPlugin&) = delete;
 
  private:
   void HandleMethodCall(
       const flutter::MethodCall<flutter::EncodableValue>& method_call,
-      std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
+      std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
+          result);
+
+  // Windowing parent — used by share / save-file dialogs to anchor
+  // their picker UI to the runner HWND.
+  HWND host_window_ = nullptr;
 };
 
 }  // namespace edge_veda
