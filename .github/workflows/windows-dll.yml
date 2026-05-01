@@ -5,17 +5,16 @@ name: Windows DLL build
 # from third_party submodules. Uploads as a release artifact so host
 # Flutter apps that pull this package via pub git (no submodules) can
 # vendor a real binary instead of building from source.
+#
+# Manual-trigger only. Do not auto-fire on push or PR — the build
+# pulls multi-GB submodules + Vulkan SDK and takes ~45 min on a
+# Windows runner; only run it when a host app actually needs a
+# fresh DLL.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'core/**'
-      - 'flutter/windows/**'
-      - '.github/workflows/windows-dll.yml'
+  workflow_dispatch:
   release:
     types: [published]
-  workflow_dispatch:
 
 concurrency:
   group: windows-dll-${{ github.ref }}
@@ -51,10 +50,22 @@ jobs:
           channel: stable
           cache: true
 
+      # Pre-warm Flutter so the next `flutter --version --machine` call
+      # returns clean JSON. The first invocation prints "Building
+      # flutter tool..." / "Running pub upgrade..." on stderr+stdout
+      # which break ConvertFrom-Json downstream. After this discard
+      # call, --machine emits only the JSON.
+      - name: Pre-warm Flutter
+        shell: pwsh
+        run: |
+          flutter --version | Out-Null
+
       - name: Configure CMake
         shell: pwsh
         run: |
-          $flutterRoot = (flutter --version --machine | ConvertFrom-Json).flutterRoot
+          # FLUTTER_ROOT is set by subosito/flutter-action — use it
+          # directly to avoid re-parsing flutter --version.
+          $flutterRoot = $Env:FLUTTER_ROOT
           $flutterEng = "$flutterRoot/bin/cache/artifacts/engine/windows-x64"
           New-Item -ItemType Directory -Force -Path build | Out-Null
           cmake -S flutter/windows -B build `
@@ -80,6 +91,12 @@ jobs:
           if (Test-Path "build/Release/edge_veda_plugin.pdb") {
             Copy-Item "build/Release/edge_veda_plugin.pdb" "artifact/" -Force
           }
+          if (Test-Path "build/Release/edge_veda.dll") {
+            Copy-Item "build/Release/edge_veda.dll" "artifact/" -Force
+          }
+          if (Test-Path "build/Release/edge_veda.pdb") {
+            Copy-Item "build/Release/edge_veda.pdb" "artifact/" -Force
+          }
           Get-ChildItem artifact
 
       - name: Upload CI artifact
@@ -97,3 +114,5 @@ jobs:
           files: |
             artifact/edge_veda_plugin.dll
             artifact/edge_veda_plugin.pdb
+            artifact/edge_veda.dll
+            artifact/edge_veda.pdb
