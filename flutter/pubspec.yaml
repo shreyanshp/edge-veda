@@ -53,6 +53,14 @@ flutter:
         pluginClass: EdgeVedaPlugin
       macos:
         pluginClass: EdgeVedaPlugin
+      # Windows port — first commit ships the plugin shell that
+      # registers `com.edgeveda.edge_veda/main` and returns UNAVAILABLE
+      # for every call. Host apps gate AI surfaces on
+      # PlatformCapabilities.edgeVedaAvailable (bitcoin-portal/mobile-news
+      # issues/574 Phase 4) so this codepath is not exercised in normal
+      # flow yet; it lets the host app build + link cleanly on Windows.
+      windows:
+        pluginClass: EdgeVedaPluginCApi
 
 ffigen:
   name: EdgeVedaNativeBindings
