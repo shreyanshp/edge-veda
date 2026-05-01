@@ -56,34 +56,46 @@ target_compile_definitions(${PLUGIN_NAME} PRIVATE
 target_compile_options(${PLUGIN_NAME} PRIVATE "/EHsc")
 
 # Compile the C++ core if the third_party submodules are present.
-# Ignored when the package was pulled via pub git (submodules don't
-# init); use a separate Windows DLL build (.github/workflows/windows.yml
-# in this repo) to produce a vendored binary for those host builds.
+# When pulled via pub git (no submodule init), the core build is
+# skipped — host apps should vendor a pre-built `edge_veda.dll` next
+# to the exe (the windows-dll.yml workflow in this repo produces that
+# artifact and attaches it to releases).
+#
+# The Dart FFI layer at `lib/src/ffi/bindings.dart:984` opens
+# `edge_veda.dll` by name, so we build the core as SHARED and add
+# the resulting DLL to `edge_veda_bundled_libraries` so Flutter's
+# install step copies it next to the runner exe.
 set(EDGE_VEDA_CORE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../core")
+set(EDGE_VEDA_DLL_PATHS "")
 if(EXISTS "${EDGE_VEDA_CORE_DIR}/third_party/llama.cpp/CMakeLists.txt")
   message(STATUS "edge_veda: third_party submodules present; "
-                  "compiling C++ core in-tree.")
+                  "compiling C++ core in-tree as edge_veda.dll.")
   set(EDGE_VEDA_ENABLE_VULKAN ON CACHE BOOL "" FORCE)
   set(EDGE_VEDA_ENABLE_CPU ON CACHE BOOL "" FORCE)
-  set(EDGE_VEDA_BUILD_SHARED OFF CACHE BOOL "" FORCE)
-  set(EDGE_VEDA_BUILD_STATIC ON CACHE BOOL "" FORCE)
+  set(EDGE_VEDA_BUILD_SHARED ON CACHE BOOL "" FORCE)
+  set(EDGE_VEDA_BUILD_STATIC OFF CACHE BOOL "" FORCE)
   add_subdirectory("${EDGE_VEDA_CORE_DIR}" edge_veda_core_build)
-  target_link_libraries(${PLUGIN_NAME} PRIVATE edge_veda_static)
-  target_include_directories(${PLUGIN_NAME} PRIVATE
-    "${EDGE_VEDA_CORE_DIR}/include")
+  # Plugin doesn't link the core — FFI dlopen reaches it at runtime.
+  # We just need to ensure the DLL ships next to the exe.
+  list(APPEND EDGE_VEDA_DLL_PATHS "$<TARGET_FILE:edge_veda>")
   target_compile_definitions(${PLUGIN_NAME} PRIVATE
     "EDGE_VEDA_CORE_LINKED")
 else()
-  message(STATUS "edge_veda: third_party submodules not present; "
-                  "building plugin without C++ core. ev_* FFI calls "
-                  "will fail at dlsym — host app should keep "
-                  "PlatformCapabilities.edgeVedaAvailable = false on "
-                  "Windows until a vendored DLL is wired in.")
+  message(STATUS "edge_veda: third_party submodules not present. "
+                  "Pre-built edge_veda.dll must be present in "
+                  "flutter/windows/Frameworks/ and added to "
+                  "edge_veda_bundled_libraries below for FFI to "
+                  "resolve at runtime.")
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Frameworks/edge_veda.dll")
+    list(APPEND EDGE_VEDA_DLL_PATHS
+      "${CMAKE_CURRENT_SOURCE_DIR}/Frameworks/edge_veda.dll")
+  endif()
 endif()
 
 # List of absolute paths to libraries that should be bundled with the
-# plugin in the install step.
+# plugin in the install step. Flutter copies these next to the runner
+# .exe so DynamicLibrary.open('edge_veda.dll') resolves at runtime.
 set(edge_veda_bundled_libraries
-  ""
+  "${EDGE_VEDA_DLL_PATHS}"
   PARENT_SCOPE
 )
