@@ -495,8 +495,13 @@ class MemoryEstimator {
     // applies.
     final modelWeightsMB = (model.sizeBytes * 0.90 / (1024 * 1024)).round();
 
-    // KV cache quantization factor
-    final kvQuantFactor = model.quantization == 'F16' ? 2.0 : 1.0;
+    // KV cache quantization factor — F16/BF16/F32 weights default to
+    // an unquantised KV cache, doubling its footprint vs the Q8_0 KV
+    // cache used by every other quant.
+    final kvQuantFactor =
+        ModelAdvisor._highPrecisionKvQuants.contains(model.quantization)
+            ? 2.0
+            : 1.0;
     final kvCacheMB =
         ((model.parametersB ?? 1.0) *
                 4.0 *
@@ -694,11 +699,132 @@ class ModelAdvisor {
     DeviceTier.ultra: 1.2,
   };
 
+  /// Speed multiplier per quantization, calibrated to Q4_K_M = 1.15 on
+  /// Apple Silicon. Inference on this engine is memory-bandwidth-bound,
+  /// so lower-bit quants are *faster* — fewer bytes per weight to read.
+  /// Quality is paid for separately via [_quantQualityPenalty].
+  ///
+  /// "UD-" = Unsloth Dynamic — same K-quant kernels but a per-tensor
+  /// mixing recipe that promotes precision-sensitive tensors (attention
+  /// output, FFN down, embeddings) to a higher bit width than the
+  /// suffix implies. Slightly slower than the matching plain K-quant.
+  ///
+  /// Suffixes after the bit width:
+  ///   _S/_M/_L     mixing tier (Small/Medium/Large) — how aggressively
+  ///                sensitive tensors get bumped to a higher bit width.
+  ///   _XL          Unsloth Dynamic's wide-mix tier (UD- only).
+  ///   _0/_1        legacy non-K quants (no super-blocks).
+  /// Unknown quants fall through to 1.0.
   static const _quantSpeedMultipliers = <String, double>{
-    'Q4_K_M': 1.15,
+    // Full precision
+    'F32': 0.30,
+    'F16': 0.60,
+    'BF16': 0.60,
+    // 8-bit
     'Q8_0': 0.85,
-    'F16': 0.6,
+    'Q8_1': 0.85,
+    'Q8_K': 0.85,
+    // 6-bit
+    'Q6_K': 0.95,
+    // 5-bit
+    'Q5_0': 1.05,
+    'Q5_1': 1.05,
+    'Q5_K_S': 1.10,
+    'Q5_K_M': 1.05,
+    // 4-bit (the everyday sweet spot)
+    'Q4_0': 1.20,
+    'Q4_1': 1.20,
+    'Q4_K_S': 1.20,
+    'Q4_K_M': 1.15,
+    // 3-bit (smaller / faster; quality starts dropping)
+    'Q3_K_S': 1.40,
+    'Q3_K_M': 1.30,
+    'Q3_K_L': 1.20,
+    // 2-bit (quality cliff)
+    'Q2_K': 1.50,
+    // i-quants — codebook-based, similar bpw but lookup overhead
+    'IQ4_NL': 1.10,
+    'IQ4_XS': 1.15,
+    'IQ3_M': 1.20,
+    'IQ3_S': 1.25,
+    'IQ3_XS': 1.30,
+    'IQ3_XXS': 1.35,
+    'IQ2_M': 1.30,
+    'IQ2_S': 1.35,
+    'IQ2_XS': 1.40,
+    'IQ2_XXS': 1.45,
+    'IQ1_M': 1.55,
+    'IQ1_S': 1.60,
+    // Unsloth Dynamic — sensitive tensors held at higher precision
+    'UD-Q2_K_XL': 1.30,
+    'UD-Q3_K_XL': 1.18,
+    'UD-Q4_K_XL': 1.10,
+    'UD-Q5_K_XL': 1.00,
+    'UD-Q6_K_XL': 0.92,
+    'UD-Q8_K_XL': 0.82,
+    'UD-IQ1_M': 1.45,
+    'UD-IQ1_S': 1.50,
+    'UD-IQ2_M': 1.20,
+    'UD-IQ2_XXS': 1.35,
+    'UD-IQ3_XXS': 1.25,
   };
+
+  /// Quality penalty per quantization, relative to full precision (= 0).
+  /// Calibration anchors: Q4_K_M = -3 (the long-standing "sweet spot"
+  /// default), Q8_0 = -1 (essentially indistinguishable from F16),
+  /// Q3_K_S = -10 (real quality cliff). UD- variants land roughly two
+  /// tiers above the matching plain K-quant because Unsloth's recipe
+  /// keeps sensitive tensors at higher precision. Unknown quants fall
+  /// through to 0 — optimistic but never penalises an unrecognised file.
+  static const _quantQualityPenalty = <String, int>{
+    'F32': 0,
+    'F16': 0,
+    'BF16': 0,
+    'Q8_0': -1,
+    'Q8_1': -1,
+    'Q8_K': -1,
+    'Q6_K': -2,
+    'Q5_0': -3,
+    'Q5_1': -3,
+    'Q5_K_M': -2,
+    'Q5_K_S': -3,
+    'Q4_0': -5,
+    'Q4_1': -5,
+    'Q4_K_M': -3,
+    'Q4_K_S': -4,
+    'Q3_K_L': -5,
+    'Q3_K_M': -7,
+    'Q3_K_S': -10,
+    'Q2_K': -15,
+    'IQ4_NL': -3,
+    'IQ4_XS': -4,
+    'IQ3_M': -7,
+    'IQ3_S': -8,
+    'IQ3_XS': -9,
+    'IQ3_XXS': -10,
+    'IQ2_M': -12,
+    'IQ2_S': -13,
+    'IQ2_XS': -15,
+    'IQ2_XXS': -17,
+    'IQ1_M': -20,
+    'IQ1_S': -22,
+    'UD-Q2_K_XL': -10,
+    'UD-Q3_K_XL': -5,
+    'UD-Q4_K_XL': -1,
+    'UD-Q5_K_XL': 0,
+    'UD-Q6_K_XL': 0,
+    'UD-Q8_K_XL': 0,
+    'UD-IQ1_M': -15,
+    'UD-IQ1_S': -17,
+    'UD-IQ2_M': -8,
+    'UD-IQ2_XXS': -12,
+    'UD-IQ3_XXS': -7,
+  };
+
+  /// Quants whose KV cache defaults to a higher-precision format and
+  /// therefore consume ~2× the cache memory. Everything else assumes
+  /// llama.cpp's default Q8_0 KV cache.
+  static const _highPrecisionKvQuants = <String>{'F32', 'F16', 'BF16'};
 
   static const _useCaseTargetContext = <UseCase, int>{
     UseCase.chat: 4096,
@@ -753,7 +879,8 @@ class ModelAdvisor {
     final baseQuality = _familyBaseScores[model.family] ?? 50;
     final paramBonus =
         min(15, (log(max(model.parametersB ?? 0.1, 0.1)) / log(2)) * 5).round();
-    final quantPenalty = model.quantization == 'Q4_K_M' ? -3 : 0;
+    final quantPenalty =
+        _quantQualityPenalty[model.quantization] ?? 0;
     final taskBonus =
         (model.capabilities ?? []).contains(_requiredCapability(useCase))
             ? 10

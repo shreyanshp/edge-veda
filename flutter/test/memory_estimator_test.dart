@@ -57,18 +57,18 @@ void main() {
         contextLength: 2048,
       );
 
-      // modelWeightsMB = (700 * 1024 * 1024 * 0.15 / (1024 * 1024)).round() = 105
-      expect(estimate.modelWeightsMB, 105);
+      // modelWeightsMB = (700 * 1024 * 1024 * 0.90 / (1024 * 1024)).round() = 630
+      expect(estimate.modelWeightsMB, 630);
       // kvCacheMB = (1.0 * 4.0 * (2048/2048) * 1.0).round() = 4  (Q4_K_M kvQuantFactor=1.0)
       expect(estimate.kvCacheMB, 4);
       // metalBuffersMB = (1.0 * 80).round() = 80
       expect(estimate.metalBuffersMB, 80);
       // runtimeOverheadMB = 150
       expect(estimate.runtimeOverheadMB, 150);
-      // rawTotal = 105 + 4 + 80 + 150 = 339
-      // totalMB = (339 * 1.3).round() = 441
-      expect(estimate.totalMB, 441);
-      // fits: 441 / 4915 = ~0.09 < 1.0
+      // rawTotal = 630 + 4 + 80 + 150 = 864
+      // totalMB = (864 * 1.3).round() = 1123
+      expect(estimate.totalMB, 1123);
+      // fits: 1123 / 4915 = ~0.23 < 1.0
       expect(estimate.fits, true);
     });
   });
