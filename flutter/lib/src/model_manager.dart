@@ -142,13 +142,27 @@ class ModelManager {
       }
     }
 
-    // Check disk space before downloading
+    // Check disk space before downloading.
+    //
+    // The buffer over model.sizeBytes covers: the .part temp file during
+    // download (it lives next to the final file before the atomic rename),
+    // OS post-install overhead, KV-cache scratch at load time, and basic
+    // user-of-the-device room. A flat 100MB used to clear only the rename;
+    // devices that scraped through the precheck would then thrash at load.
+    //
+    // Now: max(500MB, 20% of model size). For a 638MB TinyLlama that's a
+    // 500MB floor; for a 7.5GB Mistral-Nemo Q4 that's ~1.5GB — proportional
+    // to the runtime allocation the model itself will demand.
     final freeBytes = await telemetryService.getFreeDiskSpace();
     if (freeBytes >= 0) {
-      const bufferBytes = 100 * 1024 * 1024; // 100MB buffer for temp files
-      if (freeBytes < model.sizeBytes + bufferBytes) {
+      const minBufferBytes = 500 * 1024 * 1024;
+      final scaledBuffer = (model.sizeBytes * 0.20).round();
+      final bufferBytes =
+          scaledBuffer > minBufferBytes ? scaledBuffer : minBufferBytes;
+      final requiredBytes = model.sizeBytes + bufferBytes;
+      if (freeBytes < requiredBytes) {
         final freeMB = (freeBytes / (1024 * 1024)).round();
-        final requiredMB = (model.sizeBytes / (1024 * 1024)).round();
+        final requiredMB = (requiredBytes / (1024 * 1024)).round();
         throw DownloadException(
           'Insufficient disk space',
           details:

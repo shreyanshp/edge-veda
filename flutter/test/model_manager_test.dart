@@ -385,7 +385,8 @@ void main() {
   group('Disk space pre-check', () {
     test('throws DownloadException when insufficient disk space', () async {
       final manager = TestableModelManager(tmpDir);
-      // 50MB free, model needs 100MB + 100MB buffer = 200MB
+      // 50MB free, 100MB model → buffer = max(500MB, 20MB) = 500MB →
+      // requires 600MB. 50 ≪ 600 so the precheck rejects it.
       manager.telemetryService = MockTelemetryService(
         freeDiskSpace: 50 * 1024 * 1024,
       );
@@ -411,9 +412,10 @@ void main() {
 
     test('allows download when disk space is sufficient', () async {
       final manager = TestableModelManager(tmpDir);
-      // 500MB free, model needs 8 bytes + 100MB buffer -- plenty of space
+      // 1GB free, 8-byte model. Buffer floors at 500MB, so the precheck
+      // requires ~500MB — comfortably below the 1GB free.
       manager.telemetryService = MockTelemetryService(
-        freeDiskSpace: 500 * 1024 * 1024,
+        freeDiskSpace: 1024 * 1024 * 1024,
       );
 
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -476,7 +478,7 @@ void main() {
 
       final model = _testModel(
         name: 'Big Model',
-        sizeBytes: 200 * 1024 * 1024, // 200MB (needs 200 + 100 = 300MB)
+        sizeBytes: 200 * 1024 * 1024, // 200MB; buffer = max(500MB, 40MB)
         downloadUrl: 'http://localhost:1/unreachable',
       );
 
@@ -484,9 +486,43 @@ void main() {
         await manager.downloadModel(model, verifyChecksum: false);
         fail('Should have thrown');
       } on DownloadException catch (e) {
+        // requiredMB is now model + buffer (200 + 500 = 700) so the user
+        // sees the real ask, not just the bare model size.
         expect(e.details, contains('150MB free'));
-        expect(e.details, contains('200MB required'));
+        expect(e.details, contains('700MB required'));
         expect(e.details, contains('Big Model'));
+      }
+
+      manager.dispose();
+    });
+
+    test('buffer scales with model size for large models', () async {
+      final manager = TestableModelManager(tmpDir);
+      // 7GB model. Buffer = max(500MB, 20% × 7168MB) = ~1434MB.
+      // Required ≈ 7168 + 1434 = 8602MB. 8GB free is short of that.
+      manager.telemetryService = MockTelemetryService(
+        freeDiskSpace: 8 * 1024 * 1024 * 1024,
+      );
+
+      final model = _testModel(
+        name: 'Big Q4',
+        sizeBytes: 7 * 1024 * 1024 * 1024,
+        downloadUrl: 'http://localhost:1/unreachable',
+      );
+
+      try {
+        await manager.downloadModel(model, verifyChecksum: false);
+        fail('Should have thrown');
+      } on DownloadException catch (e) {
+        expect(e.details, contains('8192MB free'));
+        // Don't pin the exact requiredMB — the math is rounded; just
+        // verify the buffer scaled past the 500MB floor by checking
+        // we're well above bare model size.
+        final match =
+            RegExp(r'(\d+)MB required').firstMatch(e.details ?? '');
+        expect(match, isNotNull);
+        final requiredMB = int.parse(match!.group(1)!);
+        expect(requiredMB, greaterThan(8500)); // 7168 + scaled buffer
       }
 
       manager.dispose();
