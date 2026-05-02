@@ -1124,6 +1124,106 @@ EV_API void ev_image_cancel(ev_image_context ctx);
 EV_API void ev_image_free_result(ev_image_result* result);
 
 /* ============================================================================
+ * Speculative Decoding (mobile-news#586 gap #10)
+ * =========================================================================
+ *
+ * Wraps llama.cpp's `common_speculative_*` API (common/speculative.h)
+ * — *not* the (non-existent) `llama_speculative_*` API. Speculative
+ * decoding pairs a fast small "draft" model with the loaded target
+ * context: the draft proposes N tokens per step, the target verifies
+ * them in a single batch, and the longest accepted prefix becomes the
+ * actual output. End-to-end speedup is 2–3x on long generations when
+ * the draft accepts well (>~75% of proposals on most chat).
+ *
+ * Lifecycle:
+ *   1. ev_init(...)                                    — load target
+ *   2. ev_speculative_attach(ctx, draft_path, params)  — load draft
+ *   3. ev_generate / ev_generate_stream as usual        — speculative
+ *      runs transparently when a draft is attached
+ *   4. ev_speculative_detach(ctx)                       — drop draft
+ *
+ * Failure modes:
+ *   - draft_path missing / unreadable      → EV_ERROR_FILE_NOT_FOUND
+ *   - draft + target incompatible vocab    → EV_ERROR_INVALID_MODEL
+ *   - OOM loading draft                    → EV_ERROR_OUT_OF_MEMORY
+ *   - host should call ev_speculative_detach() on any error from
+ *     ev_speculative_attach() to clean up partial state.
+ */
+
+/**
+ * @brief Parameters controlling draft generation per step.
+ */
+typedef struct ev_speculative_params {
+    int32_t n_max;       /**< Max tokens to draft per step (default 16) */
+    int32_t n_min;       /**< Min draft tokens before stopping (default 0) */
+    float   p_min;       /**< Min probability for greedy draft (default 0.75) */
+    float   p_split;     /**< Probability split threshold (default 0.1) */
+    int32_t n_ctx;       /**< Draft context size; 0 = inherit from target */
+    int32_t n_gpu_layers;/**< Layers to offload; -1 = inherit; 0 = CPU draft */
+    int32_t cache_type_k;/**< KV K type for draft (1=F16, 8=Q8_0). 0=F16 */
+    int32_t cache_type_v;/**< KV V type for draft (1=F16, 8=Q8_0). 0=F16 */
+} ev_speculative_params;
+
+/**
+ * @brief Fill a [ev_speculative_params] with library defaults
+ *        (n_max=16, n_min=0, p_min=0.75, p_split=0.1).
+ */
+EV_API void ev_speculative_params_default(ev_speculative_params* params);
+
+/**
+ * @brief Attach a draft model to [ctx] for speculative decoding.
+ *
+ * Subsequent `ev_generate` / `ev_generate_stream` calls on this
+ * context will transparently use speculative decoding. Only one
+ * draft can be attached at a time; calling attach twice replaces
+ * the previous draft.
+ *
+ * @param ctx          Target context from ev_init()
+ * @param draft_path   Path to draft model GGUF (smaller than target)
+ * @param params       Draft parameters (NULL = defaults)
+ * @return EV_SUCCESS on attach; otherwise EV_ERROR_*
+ */
+EV_API ev_error_t ev_speculative_attach(
+    ev_context ctx,
+    const char* draft_path,
+    const ev_speculative_params* params
+);
+
+/**
+ * @brief Whether a draft is currently attached to [ctx].
+ */
+EV_API bool ev_speculative_is_attached(ev_context ctx);
+
+/**
+ * @brief Detach the draft and free its resources.
+ *
+ * Safe to call even when no draft is attached (returns EV_SUCCESS).
+ * Subsequent generation reverts to non-speculative single-model
+ * decoding.
+ */
+EV_API ev_error_t ev_speculative_detach(ev_context ctx);
+
+/**
+ * @brief Cumulative speculative-decoding statistics for [ctx].
+ */
+typedef struct ev_speculative_stats {
+    int64_t n_drafted;       /**< Total tokens drafted */
+    int64_t n_accepted;      /**< Total tokens accepted by target */
+    int64_t n_rejected;      /**< Total tokens rejected (= drafted - accepted) */
+    double  acceptance_rate; /**< accepted / max(drafted, 1) */
+} ev_speculative_stats;
+
+/**
+ * @brief Read counters since the draft was attached.
+ *
+ * Returns EV_ERROR_INVALID_STATE if no draft is attached.
+ */
+EV_API ev_error_t ev_speculative_get_stats(
+    ev_context ctx,
+    ev_speculative_stats* stats
+);
+
+/* ============================================================================
  * Test Hooks (compile with EDGE_VEDA_TEST_HOOKS to enable)
  * ========================================================================= */
 
