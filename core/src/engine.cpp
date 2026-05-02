@@ -1019,7 +1019,7 @@ static char* ev_stream_next_spec(ev_stream stream, ev_error_t* error) {
     llama_batch_free(batch);
 
     const int n_accepted = static_cast<int>(ids.size()) - 1; // last is the new sample
-    common_speculative_accept(ctx->spec_ctx, n_accepted);
+    common_speculative_accept(ctx->spec_ctx, static_cast<uint16_t>(n_accepted));
     ctx->spec_n_drafted  += static_cast<int64_t>(draft.size());
     ctx->spec_n_accepted += static_cast<int64_t>(n_accepted);
 
@@ -1678,11 +1678,11 @@ EV_API ev_error_t ev_speculative_attach(
 ) {
 #ifndef EDGE_VEDA_LLAMA_ENABLED
     (void)ctx; (void)draft_path; (void)params;
-    return EV_ERROR_NOT_INITIALIZED;
+    return EV_ERROR_CONTEXT_INVALID;
 #else
     if (!ctx || ctx->magic != EV_CTX_MAGIC) return EV_ERROR_INVALID_PARAM;
     if (!ctx->model_loaded || !ctx->llama_ctx || !ctx->model) {
-        return EV_ERROR_NOT_INITIALIZED;
+        return EV_ERROR_CONTEXT_INVALID;
     }
     if (!draft_path || draft_path[0] == '\0') return EV_ERROR_INVALID_PARAM;
 
@@ -1708,7 +1708,7 @@ EV_API ev_error_t ev_speculative_attach(
     ctx->draft_model = llama_model_load_from_file(draft_path, m_params);
     if (!ctx->draft_model) {
         ctx->last_error = "ev_speculative_attach: draft model load failed";
-        return EV_ERROR_FILE_NOT_FOUND;
+        return EV_ERROR_MODEL_LOAD_FAILED;
     }
 
     // Vocabulary compatibility: speculative decoding requires the
@@ -1719,7 +1719,7 @@ EV_API ev_error_t ev_speculative_attach(
         llama_model_free(ctx->draft_model);
         ctx->draft_model = nullptr;
         ctx->last_error = "ev_speculative_attach: draft vocab size mismatch";
-        return EV_ERROR_INVALID_MODEL;
+        return EV_ERROR_MODEL_LOAD_FAILED;
     }
 
     // Build the params common_speculative_init expects. Three things
@@ -1734,7 +1734,7 @@ EV_API ev_error_t ev_speculative_attach(
     // tunables (n_max / n_min / p_min / p_split) live on
     // params.draft.* and gate how aggressively the speculator drafts.
     llama_context_params dft_cparams = llama_context_default_params();
-    dft_cparams.n_ctx   = (eff.n_ctx > 0) ? eff.n_ctx : ctx->config.context_length;
+    dft_cparams.n_ctx   = (eff.n_ctx > 0) ? eff.n_ctx : ctx->config.context_size;
     dft_cparams.n_batch = dft_cparams.n_ctx;
     if (eff.cache_type_k > 0) dft_cparams.type_k = (ggml_type)eff.cache_type_k;
     if (eff.cache_type_v > 0) dft_cparams.type_v = (ggml_type)eff.cache_type_v;
@@ -1793,10 +1793,10 @@ EV_API ev_error_t ev_speculative_get_stats(
     ev_speculative_stats* stats
 ) {
 #ifndef EDGE_VEDA_LLAMA_ENABLED
-    (void)ctx; (void)stats; return EV_ERROR_NOT_INITIALIZED;
+    (void)ctx; (void)stats; return EV_ERROR_CONTEXT_INVALID;
 #else
     if (!ctx || ctx->magic != EV_CTX_MAGIC || !stats) return EV_ERROR_INVALID_PARAM;
-    if (!ctx->spec_ctx) return EV_ERROR_NOT_INITIALIZED;
+    if (!ctx->spec_ctx) return EV_ERROR_CONTEXT_INVALID;
     stats->n_drafted  = ctx->spec_n_drafted;
     stats->n_accepted = ctx->spec_n_accepted;
     stats->n_rejected = ctx->spec_n_drafted - ctx->spec_n_accepted;

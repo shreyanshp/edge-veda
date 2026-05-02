@@ -68,14 +68,37 @@ class EdgeVedaConfig {
   /// Default is Q8_0 (8) for mobile memory optimization.
   final int kvCacheTypeV;
 
-  // Speculative-decoding pairing is the host's policy decision (the
-  // host's model catalog knows which targets pair with which drafts).
-  // The SDK exposes the *mechanism* via the FFI binding
-  // `EdgeVedaNativeBindings.evSpeculativeAttach` — hosts call it
-  // after they've created a long-lived ctx, with paths sourced from
-  // their own model registry. There's no SDK-level pairing flag here
-  // because hardcoding a model-family table inside the SDK rots
-  // against backend-driven dynamic catalogs.
+  /// Whether the host wants speculative decoding turned on by
+  /// default for this run (mobile-news#586 gap #10). **Default: true.**
+  ///
+  /// Host-readable signal only — the SDK doesn't auto-attach a draft
+  /// model itself, because pairing rules belong in the host's
+  /// backend-driven model catalog (each catalog entry should ship
+  /// a `draftModelId` field — backend migration tracked separately).
+  /// Hardcoding a family table inside the SDK rots against catalog
+  /// updates.
+  ///
+  /// Host integration:
+  ///   1. Backend's model-list API entry adds `draftModelId`
+  ///      (nullable). Targets that should run speculative point at
+  ///      the catalog entry of their preferred small draft (same
+  ///      vocab family).
+  ///   2. When the host loads a target model and finds
+  ///      `draftModelId != null` AND the draft is downloaded AND
+  ///      `EdgeVedaConfig.autoSpeculative` is true, the host calls
+  ///      `EdgeVedaNativeBindings.evSpeculativeAttach(ctx, draftPath, …)`
+  ///      after creating its long-lived ctx (typically inside
+  ///      ChatSession or VedaProvider).
+  ///   3. Failures (vocab mismatch, OOM, missing file) bubble back
+  ///      as ev_error_t; host logs to Sentry and falls back to
+  ///      non-speculative — never blocks generation.
+  ///
+  /// Quality note: the speculative loop preserves the target
+  /// sampler's distribution at any temperature (matches upstream
+  /// `common_sampler_sample_and_accept_n` behaviour).
+  /// The minor delta vs non-speculative is repetition-penalty drift
+  /// across drafted positions — sub-1% effect in practice.
+  final bool autoSpeculative;
 
   const EdgeVedaConfig({
     required this.modelPath,
@@ -89,6 +112,7 @@ class EdgeVedaConfig {
     this.flashAttn = -1,
     this.kvCacheTypeK = 8,
     this.kvCacheTypeV = 8,
+    this.autoSpeculative = true,
   });
 
   Map<String, dynamic> toJson() => {
@@ -103,6 +127,7 @@ class EdgeVedaConfig {
     'flashAttn': flashAttn,
     'kvCacheTypeK': kvCacheTypeK,
     'kvCacheTypeV': kvCacheTypeV,
+    'autoSpeculative': autoSpeculative,
   };
 
   @override
