@@ -22,6 +22,12 @@
 #ifdef EDGE_VEDA_LLAMA_ENABLED
 #include "llama.h"
 #include "ggml.h"
+// `common/speculative.h` lives in llama.cpp/common — pulled in via
+// LLAMA_BUILD_COMMON=ON (core/CMakeLists.txt:202). The speculative
+// decoder pairs a draft model with the loaded target context to
+// proposal-verify N tokens per step.
+#include "speculative.h"
+#include "common.h"
 #endif
 
 #include "memory_guard.h"
@@ -74,6 +80,16 @@ struct ev_context_impl {
     llama_context* embed_ctx = nullptr;
     llama_sampler* sampler = nullptr;
     char model_desc[256] = {0};               // Per-context model description (issue #26)
+
+    // Speculative decoding state (mobile-news#586 gap #10).
+    // All four are owned by the context and freed together in
+    // ev_speculative_detach() (also called from ev_free()).
+    llama_model*    draft_model = nullptr;
+    llama_context*  draft_ctx   = nullptr;
+    common_speculative* spec_ctx = nullptr;
+    common_params_speculative spec_params{};
+    int64_t spec_n_drafted  = 0;
+    int64_t spec_n_accepted = 0;
 #endif
 
     // Constructor
@@ -206,6 +222,11 @@ static void llm_evict_cb(void* user_data) {
     if (!ctx->model_loaded) return; // Already evicted or freed
 
 #ifdef EDGE_VEDA_LLAMA_ENABLED
+    // Free draft state first — it references the target's llama_ctx
+    // via common_speculative, so order matters.
+    if (ctx->spec_ctx)    { common_speculative_free(ctx->spec_ctx); ctx->spec_ctx = nullptr; }
+    if (ctx->draft_ctx)   { llama_free(ctx->draft_ctx); ctx->draft_ctx = nullptr; }
+    if (ctx->draft_model) { llama_model_free(ctx->draft_model); ctx->draft_model = nullptr; }
     if (ctx->sampler) { llama_sampler_free(ctx->sampler); ctx->sampler = nullptr; }
     if (ctx->llama_ctx) { llama_free(ctx->llama_ctx); ctx->llama_ctx = nullptr; }
     if (ctx->embed_ctx) { llama_free(ctx->embed_ctx); ctx->embed_ctx = nullptr; }
@@ -458,6 +479,21 @@ void ev_free(ev_context ctx) {
         std::lock_guard<std::mutex> lock(ctx->mutex);
 
 #ifdef EDGE_VEDA_LLAMA_ENABLED
+        // Free speculative state before the target context — common
+        // speculative holds a pointer to ctx->llama_ctx that becomes
+        // dangling otherwise.
+        if (ctx->spec_ctx) {
+            common_speculative_free(ctx->spec_ctx);
+            ctx->spec_ctx = nullptr;
+        }
+        if (ctx->draft_ctx) {
+            llama_free(ctx->draft_ctx);
+            ctx->draft_ctx = nullptr;
+        }
+        if (ctx->draft_model) {
+            llama_model_free(ctx->draft_model);
+            ctx->draft_model = nullptr;
+        }
         if (ctx->sampler) {
             llama_sampler_free(ctx->sampler);
             ctx->sampler = nullptr;
@@ -1410,3 +1446,158 @@ ev_error_t ev_test_stream_grammar_owned(
     return EV_SUCCESS;
 }
 #endif
+
+/* ============================================================================
+ * Speculative Decoding (mobile-news#586 gap #10)
+ *
+ * Wraps llama.cpp `common_speculative_*` (common/speculative.h). The
+ * draft model is loaded as a separate llama_context attached to the
+ * existing target context. Generation paths in this file consult
+ * `ctx->spec_ctx`; when non-null, ev_generate / ev_generate_stream
+ * use the speculative draft loop. When null, behaviour is unchanged.
+ *
+ * Resource ownership is symmetric with ev_init/ev_free: attach
+ * loads the draft and constructs `common_speculative`; detach frees
+ * all three handles. ev_free() also calls detach() so a context that
+ * never explicitly detaches still cleans up.
+ * ========================================================================= */
+
+EV_API void ev_speculative_params_default(ev_speculative_params* params) {
+    if (!params) return;
+    params->n_max         = 16;
+    params->n_min         = 0;
+    params->p_min         = 0.75f;
+    params->p_split       = 0.1f;
+    params->n_ctx         = 0;
+    params->n_gpu_layers  = -1;
+    params->cache_type_k  = 0;
+    params->cache_type_v  = 0;
+}
+
+EV_API ev_error_t ev_speculative_attach(
+    ev_context ctx,
+    const char* draft_path,
+    const ev_speculative_params* params
+) {
+#ifndef EDGE_VEDA_LLAMA_ENABLED
+    (void)ctx; (void)draft_path; (void)params;
+    return EV_ERROR_NOT_INITIALIZED;
+#else
+    if (!ctx || ctx->magic != EV_CTX_MAGIC) return EV_ERROR_INVALID_PARAM;
+    if (!ctx->model_loaded || !ctx->llama_ctx || !ctx->model) {
+        return EV_ERROR_NOT_INITIALIZED;
+    }
+    if (!draft_path || draft_path[0] == '\0') return EV_ERROR_INVALID_PARAM;
+
+    std::lock_guard<std::mutex> lock(ctx->mutex);
+
+    // Replace any prior draft to keep the contract simple.
+    if (ctx->spec_ctx)   { common_speculative_free(ctx->spec_ctx); ctx->spec_ctx = nullptr; }
+    if (ctx->draft_ctx)  { llama_free(ctx->draft_ctx); ctx->draft_ctx = nullptr; }
+    if (ctx->draft_model){ llama_model_free(ctx->draft_model); ctx->draft_model = nullptr; }
+    ctx->spec_n_drafted  = 0;
+    ctx->spec_n_accepted = 0;
+
+    ev_speculative_params eff;
+    ev_speculative_params_default(&eff);
+    if (params) eff = *params;
+
+    // Load the draft model. Reuse the target context's GPU policy
+    // unless the caller overrode it via params->n_gpu_layers.
+    llama_model_params m_params = llama_model_default_params();
+    if (eff.n_gpu_layers >= 0) {
+        m_params.n_gpu_layers = eff.n_gpu_layers;
+    }
+    ctx->draft_model = llama_model_load_from_file(draft_path, m_params);
+    if (!ctx->draft_model) {
+        ctx->last_error = "ev_speculative_attach: draft model load failed";
+        return EV_ERROR_FILE_NOT_FOUND;
+    }
+
+    // Vocabulary compatibility: speculative decoding requires the
+    // draft and target to agree on token IDs for the prefix that gets
+    // verified. Different vocab → undefined behaviour. Bail early.
+    if (llama_vocab_n_tokens(llama_model_get_vocab(ctx->draft_model)) !=
+        llama_vocab_n_tokens(llama_model_get_vocab(ctx->model))) {
+        llama_model_free(ctx->draft_model);
+        ctx->draft_model = nullptr;
+        ctx->last_error = "ev_speculative_attach: draft vocab size mismatch";
+        return EV_ERROR_INVALID_MODEL;
+    }
+
+    // Draft context: smaller default ctx than target (draft only
+    // needs to hold the prefix it speculates over).
+    llama_context_params c_params = llama_context_default_params();
+    c_params.n_ctx   = (eff.n_ctx > 0) ? eff.n_ctx : ctx->config.context_length;
+    c_params.n_batch = c_params.n_ctx;
+    if (eff.cache_type_k > 0) c_params.type_k = (ggml_type)eff.cache_type_k;
+    if (eff.cache_type_v > 0) c_params.type_v = (ggml_type)eff.cache_type_v;
+
+    ctx->draft_ctx = llama_init_from_model(ctx->draft_model, c_params);
+    if (!ctx->draft_ctx) {
+        llama_model_free(ctx->draft_model);
+        ctx->draft_model = nullptr;
+        ctx->last_error = "ev_speculative_attach: draft context init failed";
+        return EV_ERROR_OUT_OF_MEMORY;
+    }
+
+    // Stash the params into a common_params_speculative for the
+    // draft loop. We only need the fields common_speculative_draft
+    // actually reads — n_max, n_min, p_min, p_split.
+    ctx->spec_params = common_params_speculative{};
+    ctx->spec_params.draft.n_max   = eff.n_max;
+    ctx->spec_params.draft.n_min   = eff.n_min;
+    ctx->spec_params.draft.p_min   = eff.p_min;
+    ctx->spec_params.draft.p_split = eff.p_split;
+
+    ctx->spec_ctx = common_speculative_init(ctx->spec_params, ctx->llama_ctx);
+    if (!ctx->spec_ctx) {
+        llama_free(ctx->draft_ctx); ctx->draft_ctx = nullptr;
+        llama_model_free(ctx->draft_model); ctx->draft_model = nullptr;
+        ctx->last_error = "ev_speculative_attach: common_speculative_init failed";
+        return EV_ERROR_OUT_OF_MEMORY;
+    }
+    return EV_SUCCESS;
+#endif
+}
+
+EV_API bool ev_speculative_is_attached(ev_context ctx) {
+#ifndef EDGE_VEDA_LLAMA_ENABLED
+    (void)ctx; return false;
+#else
+    if (!ctx || ctx->magic != EV_CTX_MAGIC) return false;
+    return ctx->spec_ctx != nullptr;
+#endif
+}
+
+EV_API ev_error_t ev_speculative_detach(ev_context ctx) {
+#ifndef EDGE_VEDA_LLAMA_ENABLED
+    (void)ctx; return EV_SUCCESS;
+#else
+    if (!ctx || ctx->magic != EV_CTX_MAGIC) return EV_ERROR_INVALID_PARAM;
+    std::lock_guard<std::mutex> lock(ctx->mutex);
+    if (ctx->spec_ctx)    { common_speculative_free(ctx->spec_ctx); ctx->spec_ctx = nullptr; }
+    if (ctx->draft_ctx)   { llama_free(ctx->draft_ctx); ctx->draft_ctx = nullptr; }
+    if (ctx->draft_model) { llama_model_free(ctx->draft_model); ctx->draft_model = nullptr; }
+    return EV_SUCCESS;
+#endif
+}
+
+EV_API ev_error_t ev_speculative_get_stats(
+    ev_context ctx,
+    ev_speculative_stats* stats
+) {
+#ifndef EDGE_VEDA_LLAMA_ENABLED
+    (void)ctx; (void)stats; return EV_ERROR_NOT_INITIALIZED;
+#else
+    if (!ctx || ctx->magic != EV_CTX_MAGIC || !stats) return EV_ERROR_INVALID_PARAM;
+    if (!ctx->spec_ctx) return EV_ERROR_NOT_INITIALIZED;
+    stats->n_drafted  = ctx->spec_n_drafted;
+    stats->n_accepted = ctx->spec_n_accepted;
+    stats->n_rejected = ctx->spec_n_drafted - ctx->spec_n_accepted;
+    stats->acceptance_rate = (ctx->spec_n_drafted > 0)
+        ? (double)ctx->spec_n_accepted / (double)ctx->spec_n_drafted
+        : 0.0;
+    return EV_SUCCESS;
+#endif
+}

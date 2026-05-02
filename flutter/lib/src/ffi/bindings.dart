@@ -604,6 +604,77 @@ typedef EvGenerateDart =
 typedef EvFreeStringNative = Void Function(Pointer<Utf8> str);
 typedef EvFreeStringDart = void Function(Pointer<Utf8> str);
 
+// =============================================================================
+// Speculative Decoding (mobile-news#586 gap #10)
+// =============================================================================
+
+/// Mirror of `ev_speculative_params` in core/include/edge_veda.h.
+final class EvSpeculativeParams extends Struct {
+  @Int32()
+  external int n_max;
+  @Int32()
+  external int n_min;
+  @Float()
+  external double p_min;
+  @Float()
+  external double p_split;
+  @Int32()
+  external int n_ctx;
+  @Int32()
+  external int n_gpu_layers;
+  @Int32()
+  external int cache_type_k;
+  @Int32()
+  external int cache_type_v;
+}
+
+/// Mirror of `ev_speculative_stats` in core/include/edge_veda.h.
+final class EvSpeculativeStats extends Struct {
+  @Int64()
+  external int n_drafted;
+  @Int64()
+  external int n_accepted;
+  @Int64()
+  external int n_rejected;
+  @Double()
+  external double acceptance_rate;
+}
+
+typedef EvSpeculativeParamsDefaultNative =
+    Void Function(Pointer<EvSpeculativeParams> params);
+typedef EvSpeculativeParamsDefaultDart =
+    void Function(Pointer<EvSpeculativeParams> params);
+
+typedef EvSpeculativeAttachNative =
+    Int32 Function(
+      Pointer<EvContextImpl> ctx,
+      Pointer<Utf8> draftPath,
+      Pointer<EvSpeculativeParams> params,
+    );
+typedef EvSpeculativeAttachDart =
+    int Function(
+      Pointer<EvContextImpl> ctx,
+      Pointer<Utf8> draftPath,
+      Pointer<EvSpeculativeParams> params,
+    );
+
+typedef EvSpeculativeIsAttachedNative = Bool Function(Pointer<EvContextImpl> ctx);
+typedef EvSpeculativeIsAttachedDart = bool Function(Pointer<EvContextImpl> ctx);
+
+typedef EvSpeculativeDetachNative = Int32 Function(Pointer<EvContextImpl> ctx);
+typedef EvSpeculativeDetachDart = int Function(Pointer<EvContextImpl> ctx);
+
+typedef EvSpeculativeGetStatsNative =
+    Int32 Function(
+      Pointer<EvContextImpl> ctx,
+      Pointer<EvSpeculativeStats> stats,
+    );
+typedef EvSpeculativeGetStatsDart =
+    int Function(
+      Pointer<EvContextImpl> ctx,
+      Pointer<EvSpeculativeStats> stats,
+    );
+
 // Memory management
 typedef EvGetMemoryUsageNative =
     Int32 Function(Pointer<EvContextImpl> ctx, Pointer<EvMemoryStats> stats);
@@ -1050,6 +1121,15 @@ class EdgeVedaNativeBindings {
   /// Free string allocated by Edge Veda
   late final EvFreeStringDart evFreeString;
 
+  // Speculative decoding (mobile-news#586 gap #10). Nullable so the
+  // host can detect "library predates speculative API" — older
+  // edge_veda binaries don't export these symbols.
+  EvSpeculativeParamsDefaultDart? evSpeculativeParamsDefault;
+  EvSpeculativeAttachDart? evSpeculativeAttach;
+  EvSpeculativeIsAttachedDart? evSpeculativeIsAttached;
+  EvSpeculativeDetachDart? evSpeculativeDetach;
+  EvSpeculativeGetStatsDart? evSpeculativeGetStats;
+
   // ---------------------------------------------------------------------------
   // Memory Management Functions
   // ---------------------------------------------------------------------------
@@ -1238,6 +1318,39 @@ class EdgeVedaNativeBindings {
     evGenerate = _dylib.lookupFunction<EvGenerateNative, EvGenerateDart>(
       'ev_generate',
     );
+    // Speculative decoding (mobile-news#586 gap #10).
+    // Bindings are bound only on libraries that export the symbols
+    // (anything compiled against llama.cpp >=2024 with
+    // LLAMA_BUILD_COMMON ON — that's our entire current matrix).
+    // Any older library raises ArgumentError at first lookup; we
+    // wrap each in try/catch so callers can detect availability via
+    // `evSpeculativeAttach == null`.
+    try {
+      evSpeculativeParamsDefault = _dylib.lookupFunction<
+          EvSpeculativeParamsDefaultNative,
+          EvSpeculativeParamsDefaultDart>('ev_speculative_params_default');
+      evSpeculativeAttach = _dylib.lookupFunction<
+          EvSpeculativeAttachNative, EvSpeculativeAttachDart>(
+          'ev_speculative_attach');
+      evSpeculativeIsAttached = _dylib.lookupFunction<
+          EvSpeculativeIsAttachedNative, EvSpeculativeIsAttachedDart>(
+          'ev_speculative_is_attached');
+      evSpeculativeDetach = _dylib.lookupFunction<
+          EvSpeculativeDetachNative, EvSpeculativeDetachDart>(
+          'ev_speculative_detach');
+      evSpeculativeGetStats = _dylib.lookupFunction<
+          EvSpeculativeGetStatsNative, EvSpeculativeGetStatsDart>(
+          'ev_speculative_get_stats');
+    } on ArgumentError {
+      // Pre-mobile-news#586 build of edge_veda.dll / libedge_veda.so —
+      // speculative API not present. Leave fields null.
+      evSpeculativeParamsDefault = null;
+      evSpeculativeAttach = null;
+      evSpeculativeIsAttached = null;
+      evSpeculativeDetach = null;
+      evSpeculativeGetStats = null;
+    }
+
     evFreeString = _dylib.lookupFunction<EvFreeStringNative, EvFreeStringDart>(
       'ev_free_string',
     );
