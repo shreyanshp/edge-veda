@@ -121,15 +121,20 @@ dependencies {
 // will fail loudly if a mismatch is found.
 ext.expectedJniLibHashes = [
     'arm64-v8a'  : [
-        'libedge_veda.so'  : '2ced10ff841f2c2dee128e2799374bb1c8bcbceafe9f514cf0efd6d78a641706',
+        // Vulkan-enabled (16 ggml_vk_* exports + 5 ev_speculative_*).
+        // API 28+ minimum for Vulkan 1.1 symbols.
+        'libedge_veda.so'  : '05d35b243733349a427e88e6bc55ad82b05cb5d740dbc3e404d805bfaeacf14d',
         'libc++_shared.so' : 'ab4e6c71b96b851de45a8a9bd86369e7dbc2130a44b3b4520564be94847910f2',
     ],
     'armeabi-v7a': [
-        'libedge_veda.so'  : 'a6056141ec5b16f9f2e35d113b8c13eae6a81624a1064c6dee09f1f6f60799ff',
+        // CPU-only — vulkan-hpp 1.4 stream operators don't compile
+        // against 32-bit ARM's vk::Buffer (uint64_t typedef there).
+        'libedge_veda.so'  : '5efdb6a7ad21383c46d2daed343164889c71577eff4f521ec622c7afe1dd9497',
         'libc++_shared.so' : '10ee48131d6742899619f7cfb3b8df150ad787d723c766a3fb80d4bb275711ff',
     ],
     'x86_64'     : [
-        'libedge_veda.so'  : '2b745e54101e1e7e72354e4744528b393cc3677c0150501d0ba6100044709417',
+        // Vulkan-enabled (16 ggml_vk_* exports + 5 ev_speculative_*).
+        'libedge_veda.so'  : '23581738919225da0dbb22076e310456259cb2ca2058ee521d753a002678fbf5',
         'libc++_shared.so' : 'e4cd73c8a3607269f3be58d15c21f78bff112e27f9398d6261e5f965668f8746',
     ],
 ]
