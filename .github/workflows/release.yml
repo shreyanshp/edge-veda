@@ -1,17 +1,21 @@
 # Release workflow for Edge Veda SDK
 #
-# Triggers on version tag push (v*)
+# Manual-trigger only on this fork. Inherited from upstream where
+# the v* tag-push pipeline auto-publishes to pub.dev under the
+# upstream package name. On this fork we ship via git ref (host app
+# pins a commit SHA in pubspec.yaml), so the auto-publish path would
+# either fail at auth or accidentally clobber the upstream pub
+# package. Manual dispatch keeps the xcframework build available
+# without the tag-push trap.
+#
 # Jobs:
 #   1. validate-release - Check version consistency across files
-#   2. build-and-release-xcframework - Build iOS binary and create GitHub Release
+#   2. build-and-release-xcframework - Build iOS binary, attach to GH Release
 #   3. publish-to-pub-dev - Validate with pana and publish to pub.dev
-#
 name: Release
 
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
