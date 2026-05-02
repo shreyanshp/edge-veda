@@ -128,6 +128,24 @@ struct ev_stream_impl {
     std::vector<llama_token> prompt_tokens;  // Tokenized prompt
     int n_cur = 0;                           // Current position in generation
     bool prompt_evaluated = false;           // Whether prompt has been processed
+
+    // ---- Speculative decoding state (mobile-news#586 gap #10) ----
+    // Populated only when ctx->spec_ctx is non-null at first ev_stream_next.
+    // - prompt_tgt: full target context history (every token decoded so far,
+    //   prompt + generated). common_speculative_draft consumes this to
+    //   pick the next draft sequence.
+    // - id_last: most-recently-sampled target token; the speculative loop
+    //   evaluates the target on [id_last, draft0, draft1, ...] and the
+    //   sampler decides how many drafts to accept.
+    // - spec_buffer / spec_buffer_pos: tokens that the target has already
+    //   accepted but `ev_stream_next()` hasn't yet returned to the caller
+    //   (one call returns one token to keep API contract intact).
+    // - spec_initialized: whether common_speculative_begin was called.
+    std::vector<llama_token> prompt_tgt;
+    llama_token              id_last = 0;
+    std::vector<llama_token> spec_buffer;
+    size_t                   spec_buffer_pos = 0;
+    bool                     spec_initialized = false;
 #endif
 
     // Confidence tracking
@@ -866,6 +884,178 @@ ev_stream ev_generate_stream(
     return stream;
 }
 
+#ifdef EDGE_VEDA_LLAMA_ENABLED
+/* ----------------------------------------------------------------------------
+ * Speculative streaming step (mobile-news#586 gap #10)
+ *
+ * Drives one draft+verify cycle when ctx->spec_ctx is non-null and the
+ * stream's spec_buffer is exhausted. Adapted from the canonical pattern
+ * in core/third_party/llama.cpp/examples/speculative-simple/speculative-simple.cpp
+ * but using llama_sampler_sample directly (we don't carry common_sampler).
+ *
+ * Returns the next text piece to emit, or nullptr on error / end. Caller
+ * (ev_stream_next) holds both stream->mutex and ctx->mutex.
+ *
+ * The function uses a simple greedy-acceptance rule: for each batch
+ * position 0..draft.size(), sample the target token; if it matches
+ * draft[i] (for i<draft.size()), keep accepting; first mismatch ends
+ * the run. This is correct (matches what common_sampler_sample_and_accept_n
+ * does for greedy sampling) and gives deterministic results without
+ * needing common_sampler. Probabilistic acceptance with stochastic
+ * sampling would need the common_sampler refactor — out of scope here.
+ * ------------------------------------------------------------------------- */
+static char* ev_stream_next_spec(ev_stream stream, ev_error_t* error) {
+    ev_context ctx = stream->ctx;
+    const llama_vocab* vocab = llama_model_get_vocab(ctx->model);
+
+    // 1) Return next buffered token if any.
+    if (stream->spec_buffer_pos < stream->spec_buffer.size()) {
+        llama_token tok = stream->spec_buffer[stream->spec_buffer_pos++];
+        if (llama_vocab_is_eog(vocab, tok)) {
+            stream->mark_ended();
+            if (error) *error = EV_SUCCESS;
+            return nullptr;
+        }
+        char buf[256];
+        int n = llama_token_to_piece(vocab, tok, buf, sizeof(buf), 0, true);
+        if (error) *error = EV_SUCCESS;
+        if (n <= 0) {
+            char* result = static_cast<char*>(std::malloc(1));
+            if (result) result[0] = '\0';
+            return result;
+        }
+        char* result = static_cast<char*>(std::malloc(static_cast<size_t>(n) + 1));
+        if (!result) { if (error) *error = EV_ERROR_OUT_OF_MEMORY; return nullptr; }
+        std::memcpy(result, buf, static_cast<size_t>(n));
+        result[n] = '\0';
+        return result;
+    }
+
+    // 2) First time: evaluate prompt minus its last token (which becomes id_last).
+    if (!stream->spec_initialized) {
+        const int n_prompt = static_cast<int>(stream->prompt_tokens.size());
+        if (n_prompt < 1) {
+            stream->mark_ended();
+            if (error) *error = EV_ERROR_INVALID_PARAM;
+            return nullptr;
+        }
+        llama_memory_clear(llama_get_memory(ctx->llama_ctx), true);
+
+        const int n_eval = n_prompt - 1;       // decode all but the last
+        const int n_batch = static_cast<int>(llama_n_batch(ctx->llama_ctx));
+        for (int i = 0; i < n_eval; i += n_batch) {
+            const int n_chunk = std::min(n_batch, n_eval - i);
+            llama_batch batch = llama_batch_get_one(
+                stream->prompt_tokens.data() + i, n_chunk);
+            if (llama_decode(ctx->llama_ctx, batch) != 0) {
+                stream->mark_ended();
+                if (error) *error = EV_ERROR_INFERENCE_FAILED;
+                return nullptr;
+            }
+        }
+
+        stream->prompt_tgt.assign(
+            stream->prompt_tokens.begin(),
+            stream->prompt_tokens.begin() + n_eval);
+        stream->id_last = stream->prompt_tokens[n_prompt - 1];
+        stream->n_cur = n_eval;
+        stream->prompt_evaluated = true;
+
+        common_speculative_begin(ctx->spec_ctx, stream->prompt_tgt);
+        stream->spec_initialized = true;
+    }
+
+    // 3) Stop if we've already produced enough output tokens.
+    int generated = static_cast<int>(stream->n_cur)
+                  - static_cast<int>(stream->prompt_tokens.size())
+                  + 1; // +1 because id_last hasn't been counted into n_cur yet
+    if (generated >= stream->params.max_tokens) {
+        stream->mark_ended();
+        if (error) *error = EV_SUCCESS;
+        return nullptr;
+    }
+
+    // 4) Draft up to N tokens via the speculator.
+    common_params_speculative& sp = ctx->spec_params;
+    llama_tokens draft = common_speculative_draft(
+        ctx->spec_ctx, sp, stream->prompt_tgt, stream->id_last);
+
+    // 5) Build batch: [id_last @ n_cur, draft0 @ n_cur+1, draft1 @ n_cur+2, ...].
+    //    All positions need logits=true so we can sample at each.
+    const int n_batch_size = 1 + static_cast<int>(draft.size());
+    llama_batch batch = llama_batch_init(n_batch_size, 0, 1);
+
+    auto add_to_batch = [&](llama_token tok, int pos) {
+        const int idx = batch.n_tokens;
+        batch.token[idx]    = tok;
+        batch.pos[idx]      = pos;
+        batch.n_seq_id[idx] = 1;
+        batch.seq_id[idx][0]= 0;
+        batch.logits[idx]   = 1;  // request logits for every position
+        batch.n_tokens++;
+    };
+    add_to_batch(stream->id_last, stream->n_cur);
+    for (int i = 0; i < static_cast<int>(draft.size()); ++i) {
+        add_to_batch(draft[i], stream->n_cur + 1 + i);
+    }
+
+    if (llama_decode(ctx->llama_ctx, batch) != 0) {
+        llama_batch_free(batch);
+        stream->mark_ended();
+        if (error) *error = EV_ERROR_INFERENCE_FAILED;
+        return nullptr;
+    }
+
+    // 6) Sample at each position; greedy-accept matching drafts.
+    std::vector<llama_token> ids;
+    ids.reserve(n_batch_size);
+    for (int i = 0; i < n_batch_size; ++i) {
+        llama_token sampled = llama_sampler_sample(stream->sampler, ctx->llama_ctx, i);
+        ids.push_back(sampled);
+        if (i < static_cast<int>(draft.size()) && sampled != draft[i]) {
+            break; // mismatch — stop accepting
+        }
+    }
+    llama_batch_free(batch);
+
+    const int n_accepted = static_cast<int>(ids.size()) - 1; // last is the new sample
+    common_speculative_accept(ctx->spec_ctx, n_accepted);
+    ctx->spec_n_drafted  += static_cast<int64_t>(draft.size());
+    ctx->spec_n_accepted += static_cast<int64_t>(n_accepted);
+
+    // 7) If the target rejected some drafts, the KV cache still has those
+    //    positions filled. Roll back to the last accepted position so the
+    //    next iteration starts clean. The total positions we want to keep
+    //    is n_cur (id_last) + n_accepted (drafts that matched) + 1 (we'll
+    //    not decode the new sample yet — it becomes the new id_last).
+    //    Actually after this step: id_last_old is decoded at n_cur,
+    //    accepted drafts 0..n_accepted-1 at n_cur+1..n_cur+n_accepted.
+    //    Keep KV up to position n_cur + n_accepted (inclusive), drop after.
+    if (static_cast<int>(draft.size()) > n_accepted) {
+        const int keep_through = stream->n_cur + n_accepted; // inclusive
+        // llama_memory_seq_rm removes positions [p0, p1) for sequence id.
+        llama_memory_seq_rm(llama_get_memory(ctx->llama_ctx), 0,
+                            keep_through + 1, -1);
+    }
+
+    // 8) Update prompt_tgt and id_last per the speculative-simple pattern:
+    //    push id_last_old + ids[0..n-2]; new id_last = ids.back().
+    for (size_t i = 0; i < ids.size(); ++i) {
+        stream->prompt_tgt.push_back(stream->id_last);
+        stream->id_last = ids[i];
+    }
+    stream->n_cur += static_cast<int>(ids.size()); // each id consumed one position
+
+    // 9) Buffer the sampled tokens for the caller. Each ev_stream_next call
+    //    will return one of these until the buffer drains.
+    stream->spec_buffer = std::move(ids);
+    stream->spec_buffer_pos = 0;
+
+    // Recurse to return the first buffered token.
+    return ev_stream_next_spec(stream, error);
+}
+#endif
+
 char* ev_stream_next(ev_stream stream, ev_error_t* error) {
     if (!stream) {
         if (error) *error = EV_ERROR_INVALID_PARAM;
@@ -892,6 +1082,13 @@ char* ev_stream_next(ev_stream stream, ev_error_t* error) {
 
     // Lock context for thread safety (context shared across streams)
     std::lock_guard<std::mutex> ctx_lock(ctx->mutex);
+
+    // Speculative decoding fast-path: when a draft is attached, hand off
+    // to the speculative streaming routine. It manages its own KV cache,
+    // prompt eval, and token buffer. mobile-news#586 gap #10.
+    if (ctx->spec_ctx != nullptr) {
+        return ev_stream_next_spec(stream, error);
+    }
 
     // First call: evaluate prompt and clear KV cache
     if (!stream->prompt_evaluated) {
@@ -1525,38 +1722,46 @@ EV_API ev_error_t ev_speculative_attach(
         return EV_ERROR_INVALID_MODEL;
     }
 
-    // Draft context: smaller default ctx than target (draft only
-    // needs to hold the prefix it speculates over).
-    llama_context_params c_params = llama_context_default_params();
-    c_params.n_ctx   = (eff.n_ctx > 0) ? eff.n_ctx : ctx->config.context_length;
-    c_params.n_batch = c_params.n_ctx;
-    if (eff.cache_type_k > 0) c_params.type_k = (ggml_type)eff.cache_type_k;
-    if (eff.cache_type_v > 0) c_params.type_v = (ggml_type)eff.cache_type_v;
+    // Build the params common_speculative_init expects. Three things
+    // matter:
+    //   - type           = COMMON_SPECULATIVE_TYPE_DRAFT (we're using
+    //     draft-model speculation, not n-gram lookup)
+    //   - draft.model    = pointer to the loaded draft llama_model
+    //   - draft.cparams  = llama_context_params for the draft ctx
+    //                      (init creates that ctx internally)
+    //   - draft.mparams.path = path string; init checks it for
+    //     "is a draft configured?" gating
+    // tunables (n_max / n_min / p_min / p_split) live on
+    // params.draft.* and gate how aggressively the speculator drafts.
+    llama_context_params dft_cparams = llama_context_default_params();
+    dft_cparams.n_ctx   = (eff.n_ctx > 0) ? eff.n_ctx : ctx->config.context_length;
+    dft_cparams.n_batch = dft_cparams.n_ctx;
+    if (eff.cache_type_k > 0) dft_cparams.type_k = (ggml_type)eff.cache_type_k;
+    if (eff.cache_type_v > 0) dft_cparams.type_v = (ggml_type)eff.cache_type_v;
 
-    ctx->draft_ctx = llama_init_from_model(ctx->draft_model, c_params);
-    if (!ctx->draft_ctx) {
-        llama_model_free(ctx->draft_model);
-        ctx->draft_model = nullptr;
-        ctx->last_error = "ev_speculative_attach: draft context init failed";
-        return EV_ERROR_OUT_OF_MEMORY;
-    }
-
-    // Stash the params into a common_params_speculative for the
-    // draft loop. We only need the fields common_speculative_draft
-    // actually reads — n_max, n_min, p_min, p_split.
     ctx->spec_params = common_params_speculative{};
-    ctx->spec_params.draft.n_max   = eff.n_max;
-    ctx->spec_params.draft.n_min   = eff.n_min;
-    ctx->spec_params.draft.p_min   = eff.p_min;
-    ctx->spec_params.draft.p_split = eff.p_split;
+    ctx->spec_params.type             = COMMON_SPECULATIVE_TYPE_DRAFT;
+    ctx->spec_params.draft.model      = ctx->draft_model;
+    ctx->spec_params.draft.cparams    = dft_cparams;
+    ctx->spec_params.draft.mparams.path = std::string(draft_path);
+    ctx->spec_params.draft.n_max      = eff.n_max;
+    ctx->spec_params.draft.n_min      = eff.n_min;
+    ctx->spec_params.draft.p_min      = eff.p_min;
+    ctx->spec_params.draft.p_split    = eff.p_split;
+    if (eff.n_gpu_layers >= 0) {
+        ctx->spec_params.draft.n_gpu_layers = eff.n_gpu_layers;
+    }
 
     ctx->spec_ctx = common_speculative_init(ctx->spec_params, ctx->llama_ctx);
     if (!ctx->spec_ctx) {
-        llama_free(ctx->draft_ctx); ctx->draft_ctx = nullptr;
         llama_model_free(ctx->draft_model); ctx->draft_model = nullptr;
         ctx->last_error = "ev_speculative_attach: common_speculative_init failed";
         return EV_ERROR_OUT_OF_MEMORY;
     }
+    // common_speculative_init creates its own ctx_dft internally from
+    // params.draft.model + params.draft.cparams; we no longer keep our
+    // own draft_ctx.
+    ctx->draft_ctx = nullptr;
     return EV_SUCCESS;
 #endif
 }

@@ -348,12 +348,18 @@ function(configure_edge_veda_target target_name)
 
     # Link llama.cpp if available (llama, ggml, and mtmd libraries)
     if(LLAMA_CPP_AVAILABLE)
-        target_link_libraries(${target_name} PRIVATE llama ggml mtmd)
+        # mobile-news#586 gap #10: link against `common` so the speculative
+        # decoder symbols (common_speculative_init / draft / accept / free)
+        # resolve at link time. The `common` target is built when
+        # LLAMA_BUILD_COMMON ON, which we already require for mtmd.
+        target_link_libraries(${target_name} PRIVATE llama ggml mtmd common)
         target_compile_definitions(${target_name} PRIVATE EDGE_VEDA_LLAMA_ENABLED)
         target_include_directories(${target_name} PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp/include
             ${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp/ggml/include
             ${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp/tools/mtmd
+            # speculative.h + common.h live in third_party/llama.cpp/common.
+            ${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp/common
         )
     endif()
 
