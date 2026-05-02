@@ -436,7 +436,13 @@ function(configure_edge_veda_target target_name)
 
     # Compiler warnings
     if(MSVC)
-        target_compile_options(${target_name} PRIVATE /W4 /WX)
+        # /W4 /WX with project code only. Suppress C4244/C4305
+        # (numeric narrowing) because llama.cpp's common.h has
+        # `static const float x = 0.05;` style initializers that
+        # MSVC warns about; we don't own that header so we can't
+        # fix the warnings upstream.
+        target_compile_options(${target_name} PRIVATE
+            /W4 /WX /wd4244 /wd4305)
     else()
         target_compile_options(${target_name} PRIVATE
             -Wall -Wextra -Wpedantic -Wno-unused-function
