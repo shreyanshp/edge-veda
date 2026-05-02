@@ -183,6 +183,8 @@ echo "=== Collecting llama.cpp + whisper.cpp libraries ==="
 
 # arm64 dependency libs
 ARM64_LLAMA_LIB=$(find "$BUILD_MACOS_ARM64" -name "libllama.a" 2>/dev/null | head -1)
+ARM64_LLAMA_COMMON_LIB=$(find "$BUILD_MACOS_ARM64" -name "libllama-common.a" 2>/dev/null | head -1)
+ARM64_LLAMA_COMMON_BASE_LIB=$(find "$BUILD_MACOS_ARM64" -name "libllama-common-base.a" 2>/dev/null | head -1)
 ARM64_GGML_LIB=$(find "$BUILD_MACOS_ARM64" -name "libggml.a" 2>/dev/null | head -1)
 ARM64_GGML_BASE_LIB=$(find "$BUILD_MACOS_ARM64" -name "libggml-base.a" 2>/dev/null | head -1)
 ARM64_GGML_METAL_LIB=$(find "$BUILD_MACOS_ARM64" -name "libggml-metal.a" 2>/dev/null | head -1)
@@ -203,6 +205,8 @@ echo "arm64 whisper: $ARM64_WHISPER_LIB"
 echo "arm64 stable-diffusion: $ARM64_SD_LIB"
 # x86_64 dependency libs
 X86_LLAMA_LIB=$(find "$BUILD_MACOS_X86" -name "libllama.a" 2>/dev/null | head -1)
+X86_LLAMA_COMMON_LIB=$(find "$BUILD_MACOS_X86" -name "libllama-common.a" 2>/dev/null | head -1)
+X86_LLAMA_COMMON_BASE_LIB=$(find "$BUILD_MACOS_X86" -name "libllama-common-base.a" 2>/dev/null | head -1)
 X86_GGML_LIB=$(find "$BUILD_MACOS_X86" -name "libggml.a" 2>/dev/null | head -1)
 X86_GGML_BASE_LIB=$(find "$BUILD_MACOS_X86" -name "libggml-base.a" 2>/dev/null | head -1)
 X86_GGML_METAL_LIB=$(find "$BUILD_MACOS_X86" -name "libggml-metal.a" 2>/dev/null | head -1)
@@ -233,6 +237,8 @@ mkdir -p "$MERGED_DIR/arm64" "$MERGED_DIR/x86_64"
 # Build arm64 merge list
 ARM64_LIBS_TO_MERGE="$ARM64_LIB"
 [ -n "$ARM64_LLAMA_LIB" ] && [ -f "$ARM64_LLAMA_LIB" ] && ARM64_LIBS_TO_MERGE="$ARM64_LIBS_TO_MERGE $ARM64_LLAMA_LIB"
+[ -n "$ARM64_LLAMA_COMMON_LIB" ] && [ -f "$ARM64_LLAMA_COMMON_LIB" ] && ARM64_LIBS_TO_MERGE="$ARM64_LIBS_TO_MERGE $ARM64_LLAMA_COMMON_LIB"
+[ -n "$ARM64_LLAMA_COMMON_BASE_LIB" ] && [ -f "$ARM64_LLAMA_COMMON_BASE_LIB" ] && ARM64_LIBS_TO_MERGE="$ARM64_LIBS_TO_MERGE $ARM64_LLAMA_COMMON_BASE_LIB"
 [ -n "$ARM64_GGML_LIB" ] && [ -f "$ARM64_GGML_LIB" ] && ARM64_LIBS_TO_MERGE="$ARM64_LIBS_TO_MERGE $ARM64_GGML_LIB"
 [ -n "$ARM64_GGML_BASE_LIB" ] && [ -f "$ARM64_GGML_BASE_LIB" ] && ARM64_LIBS_TO_MERGE="$ARM64_LIBS_TO_MERGE $ARM64_GGML_BASE_LIB"
 [ -n "$ARM64_GGML_METAL_LIB" ] && [ -f "$ARM64_GGML_METAL_LIB" ] && ARM64_LIBS_TO_MERGE="$ARM64_LIBS_TO_MERGE $ARM64_GGML_METAL_LIB"
@@ -245,6 +251,8 @@ ARM64_LIBS_TO_MERGE="$ARM64_LIB"
 # Build x86_64 merge list
 X86_LIBS_TO_MERGE="$X86_LIB"
 [ -n "$X86_LLAMA_LIB" ] && [ -f "$X86_LLAMA_LIB" ] && X86_LIBS_TO_MERGE="$X86_LIBS_TO_MERGE $X86_LLAMA_LIB"
+[ -n "$X86_LLAMA_COMMON_LIB" ] && [ -f "$X86_LLAMA_COMMON_LIB" ] && X86_LIBS_TO_MERGE="$X86_LIBS_TO_MERGE $X86_LLAMA_COMMON_LIB"
+[ -n "$X86_LLAMA_COMMON_BASE_LIB" ] && [ -f "$X86_LLAMA_COMMON_BASE_LIB" ] && X86_LIBS_TO_MERGE="$X86_LIBS_TO_MERGE $X86_LLAMA_COMMON_BASE_LIB"
 [ -n "$X86_GGML_LIB" ] && [ -f "$X86_GGML_LIB" ] && X86_LIBS_TO_MERGE="$X86_LIBS_TO_MERGE $X86_GGML_LIB"
 [ -n "$X86_GGML_BASE_LIB" ] && [ -f "$X86_GGML_BASE_LIB" ] && X86_LIBS_TO_MERGE="$X86_LIBS_TO_MERGE $X86_GGML_BASE_LIB"
 [ -n "$X86_GGML_METAL_LIB" ] && [ -f "$X86_GGML_METAL_LIB" ] && X86_LIBS_TO_MERGE="$X86_LIBS_TO_MERGE $X86_GGML_METAL_LIB"

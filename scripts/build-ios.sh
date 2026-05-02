@@ -196,6 +196,8 @@ echo "=== Collecting llama.cpp + whisper.cpp + stable-diffusion.cpp libraries ==
 
 # Device libs - search in all possible locations
 DEVICE_LLAMA_LIB=$(find "$BUILD_IOS_DEVICE" -name "libllama.a" 2>/dev/null | head -1)
+DEVICE_LLAMA_COMMON_LIB=$(find "$BUILD_IOS_DEVICE" -name "libllama-common.a" 2>/dev/null | head -1)
+DEVICE_LLAMA_COMMON_BASE_LIB=$(find "$BUILD_IOS_DEVICE" -name "libllama-common-base.a" 2>/dev/null | head -1)
 DEVICE_GGML_LIB=$(find "$BUILD_IOS_DEVICE" -name "libggml.a" 2>/dev/null | head -1)
 DEVICE_GGML_BASE_LIB=$(find "$BUILD_IOS_DEVICE" -name "libggml-base.a" 2>/dev/null | head -1)
 DEVICE_GGML_METAL_LIB=$(find "$BUILD_IOS_DEVICE" -name "libggml-metal.a" 2>/dev/null | head -1)
@@ -217,6 +219,8 @@ echo "Device stable-diffusion: $DEVICE_SD_LIB"
 
 # Simulator libs - search in all possible locations
 SIM_LLAMA_LIB=$(find "$BUILD_IOS_SIM" -name "libllama.a" 2>/dev/null | head -1)
+SIM_LLAMA_COMMON_LIB=$(find "$BUILD_IOS_SIM" -name "libllama-common.a" 2>/dev/null | head -1)
+SIM_LLAMA_COMMON_BASE_LIB=$(find "$BUILD_IOS_SIM" -name "libllama-common-base.a" 2>/dev/null | head -1)
 SIM_GGML_LIB=$(find "$BUILD_IOS_SIM" -name "libggml.a" 2>/dev/null | head -1)
 SIM_GGML_BASE_LIB=$(find "$BUILD_IOS_SIM" -name "libggml-base.a" 2>/dev/null | head -1)
 SIM_GGML_METAL_LIB=$(find "$BUILD_IOS_SIM" -name "libggml-metal.a" 2>/dev/null | head -1)
@@ -246,6 +250,8 @@ mkdir -p "$MERGED_DIR/device" "$MERGED_DIR/simulator"
 # Build list of device libraries to merge
 DEVICE_LIBS_TO_MERGE="$DEVICE_LIB"
 [ -n "$DEVICE_LLAMA_LIB" ] && [ -f "$DEVICE_LLAMA_LIB" ] && DEVICE_LIBS_TO_MERGE="$DEVICE_LIBS_TO_MERGE $DEVICE_LLAMA_LIB"
+[ -n "$DEVICE_LLAMA_COMMON_LIB" ] && [ -f "$DEVICE_LLAMA_COMMON_LIB" ] && DEVICE_LIBS_TO_MERGE="$DEVICE_LIBS_TO_MERGE $DEVICE_LLAMA_COMMON_LIB"
+[ -n "$DEVICE_LLAMA_COMMON_BASE_LIB" ] && [ -f "$DEVICE_LLAMA_COMMON_BASE_LIB" ] && DEVICE_LIBS_TO_MERGE="$DEVICE_LIBS_TO_MERGE $DEVICE_LLAMA_COMMON_BASE_LIB"
 [ -n "$DEVICE_GGML_LIB" ] && [ -f "$DEVICE_GGML_LIB" ] && DEVICE_LIBS_TO_MERGE="$DEVICE_LIBS_TO_MERGE $DEVICE_GGML_LIB"
 [ -n "$DEVICE_GGML_BASE_LIB" ] && [ -f "$DEVICE_GGML_BASE_LIB" ] && DEVICE_LIBS_TO_MERGE="$DEVICE_LIBS_TO_MERGE $DEVICE_GGML_BASE_LIB"
 [ -n "$DEVICE_GGML_METAL_LIB" ] && [ -f "$DEVICE_GGML_METAL_LIB" ] && DEVICE_LIBS_TO_MERGE="$DEVICE_LIBS_TO_MERGE $DEVICE_GGML_METAL_LIB"
@@ -258,6 +264,8 @@ DEVICE_LIBS_TO_MERGE="$DEVICE_LIB"
 # Build list of simulator libraries to merge
 SIM_LIBS_TO_MERGE="$SIM_LIB"
 [ -n "$SIM_LLAMA_LIB" ] && [ -f "$SIM_LLAMA_LIB" ] && SIM_LIBS_TO_MERGE="$SIM_LIBS_TO_MERGE $SIM_LLAMA_LIB"
+[ -n "$SIM_LLAMA_COMMON_LIB" ] && [ -f "$SIM_LLAMA_COMMON_LIB" ] && SIM_LIBS_TO_MERGE="$SIM_LIBS_TO_MERGE $SIM_LLAMA_COMMON_LIB"
+[ -n "$SIM_LLAMA_COMMON_BASE_LIB" ] && [ -f "$SIM_LLAMA_COMMON_BASE_LIB" ] && SIM_LIBS_TO_MERGE="$SIM_LIBS_TO_MERGE $SIM_LLAMA_COMMON_BASE_LIB"
 [ -n "$SIM_GGML_LIB" ] && [ -f "$SIM_GGML_LIB" ] && SIM_LIBS_TO_MERGE="$SIM_LIBS_TO_MERGE $SIM_GGML_LIB"
 [ -n "$SIM_GGML_BASE_LIB" ] && [ -f "$SIM_GGML_BASE_LIB" ] && SIM_LIBS_TO_MERGE="$SIM_LIBS_TO_MERGE $SIM_GGML_BASE_LIB"
 [ -n "$SIM_GGML_METAL_LIB" ] && [ -f "$SIM_GGML_METAL_LIB" ] && SIM_LIBS_TO_MERGE="$SIM_LIBS_TO_MERGE $SIM_GGML_METAL_LIB"
