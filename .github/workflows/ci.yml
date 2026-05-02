@@ -1,10 +1,13 @@
 name: CI
 
+# Manual-trigger only on this fork. Inherited from upstream
+# hyle-team where this CI gates external contributions. We only push
+# verified-from-local commits here (binaries are uploaded after local
+# hash computation, not rebuilt in CI), so the auto-fire matrix
+# (~80 runner-minutes per push) was burning Actions minutes for zero
+# signal. Trigger manually before a release tag if a sanity check is
+# wanted.
 on:
-  push:
-    branches: [ main, develop ]
-  pull_request:
-    branches: [ main, develop ]
   workflow_dispatch:
 
 env:
