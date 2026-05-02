@@ -216,25 +216,12 @@ class EdgeVeda {
 
     _config = config;
     _isInitialized = true;
-
-    // Auto-attach (mobile-news#586 gap #10): not wired here.
-    // The high-level Dart `EdgeVeda.init` is a validation-only path
-    // — line ~200 frees the ctx immediately after smoke-testing. A
-    // persistent context lives elsewhere (per-operation in
-    // `generate` / `generateStream`, or per-session in `ChatSession`),
-    // so attaching a draft post-init would no-op.
-    //
-    // The right integration point depends on the host's architecture:
-    //   - If host uses ChatSession, attach after the session opens
-    //     its long-lived ctx.
-    //   - If host calls evGenerate directly, attach after each
-    //     evInit and before evGenerate (one-time cost per
-    //     generation; only worth it for long generations).
-    //   - The bare C API (ev_speculative_attach) is the foundation;
-    //     hosts wire it where their ctx lifecycle exists.
-    //
-    // `config.autoSpeculative` is preserved on the config struct so
-    // hosts can read it back when deciding whether to attach.
+    // Speculative decoding (mobile-news#586 gap #10) is wired at the
+    // FFI layer (ev_speculative_*) and exposed via
+    // EdgeVedaNativeBindings.evSpeculativeAttach. Host integrates it
+    // at its own ctx-lifecycle point — there's no SDK-side
+    // auto-pairing because hardcoding a model-family table inside
+    // the SDK rots against backend-driven dynamic catalogs.
   }
 
   /// Validate configuration before initialization
