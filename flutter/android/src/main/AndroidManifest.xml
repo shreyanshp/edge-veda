@@ -8,8 +8,27 @@
     <!-- Permission for Whisper Audio Capture -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <!-- Foreground service for sustained inference (RAG / bulk-embed
+         / long Whisper transcripts) on Android 12+. dataSync is the
+         right service type for "long-running on-device computation
+         with no special hardware affinity" — system-microphone is
+         already covered by audio capture's transient-foreground use.
+         POST_NOTIFICATIONS is Android 13+; if denied the service
+         still runs (inference protected) but the notification
+         doesn't render. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- Optional: Vulkan feature for hardware acceleration -->
     <uses-feature android:name="android.hardware.vulkan.version" android:required="false" />
     <uses-feature android:name="android.hardware.vulkan.level" android:required="false" />
+
+    <application>
+        <service
+            android:name=".InferenceForegroundService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false" />
+    </application>
 
 </manifest>

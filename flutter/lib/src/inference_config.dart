@@ -68,6 +68,35 @@ class InferenceConfig {
       DeviceTier.ultra => 1024,
     };
   }
+
+  /// Recommended `n_batch` (logical batch size) for `EdgeVedaConfig`.
+  ///
+  /// Smaller batches → less peak memory but more kernel launches.
+  /// Larger batches → faster prefill, amortizes GPU/CPU dispatch
+  /// overhead, but bigger working set. The defaults below are tuned
+  /// for the resident-RAM ranges in [DeviceTier]:
+  ///
+  /// - minimum (<3 GB): 128 — safe even with browser/social apps
+  ///   open in background. Prefill latency is what the user feels.
+  /// - low (3–6 GB):    256
+  /// - medium (6–10 GB): 512 (matches llama.cpp's default)
+  /// - high (10–16 GB):  1024
+  /// - ultra (>=16 GB):  2048
+  static int recommendedBatch(DeviceTier tier) {
+    return switch (tier) {
+      DeviceTier.minimum => 128,
+      DeviceTier.low => 256,
+      DeviceTier.medium => 512,
+      DeviceTier.high => 1024,
+      DeviceTier.ultra => 2048,
+    };
+  }
+
+  /// Recommended `n_ubatch` (physical micro-batch). One quarter of
+  /// `n_batch` is conservative — keeps peak working memory low
+  /// without losing the prefill amortization benefit.
+  static int recommendedUbatch(DeviceTier tier) =>
+      recommendedBatch(tier) ~/ 4;
 }
 
 /// Tracks consecutive vision inference failures and degrades resolution.

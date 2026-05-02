@@ -8,11 +8,38 @@ class EdgeVedaConfig {
   /// Path to the model file (GGUF format)
   final String modelPath;
 
-  /// Number of threads to use for inference (defaults to 4)
+  /// Number of threads to use for inference (defaults to 4).
+  ///
+  /// Best practice on Android big.LITTLE chipsets: pass the
+  /// `ThreadAdvisor.recommend(...)` value rather than hard-coding 4
+  /// — the advisor pins to performance cores and reserves an
+  /// efficiency core for UI on flagship Snapdragon / Tensor /
+  /// Xclipse SoCs (~10–15% throughput vs all-cores).
   final int numThreads;
 
   /// Maximum context length in tokens (defaults to 2048)
   final int contextLength;
+
+  /// Logical batch size (`n_batch` in llama.cpp). Defaults to 0,
+  /// which lets llama.cpp pick its own default (typically 512).
+  ///
+  /// Rule of thumb based on device RAM:
+  /// - 8 GB+: 1024 (faster prefill, amortizes kernel-call overhead)
+  /// - 6 GB:  512  (llama.cpp default — safe everywhere)
+  /// - 4 GB:  256  (smaller working set, less peak memory)
+  /// - <4 GB: 128
+  ///
+  /// Set via `InferenceConfig.recommendedBatch(tier)` for safe
+  /// tier-aware tuning.
+  final int nBatch;
+
+  /// Physical (micro-) batch size (`n_ubatch` in llama.cpp).
+  /// Defaults to 0 → llama.cpp picks a sensible fraction of nBatch.
+  ///
+  /// Smaller `nUbatch` reduces peak working memory at the cost of
+  /// more kernel launches; useful on 4 GB devices where the default
+  /// would OOM during prefill of long prompts.
+  final int nUbatch;
 
   /// Enable GPU acceleration via Metal (defaults to true)
   final bool useGpu;
@@ -45,6 +72,8 @@ class EdgeVedaConfig {
     required this.modelPath,
     this.numThreads = 4,
     this.contextLength = 2048,
+    this.nBatch = 0,
+    this.nUbatch = 0,
     this.useGpu = true,
     this.maxMemoryMb = 1536,
     this.verbose = false,
@@ -57,6 +86,8 @@ class EdgeVedaConfig {
     'modelPath': modelPath,
     'numThreads': numThreads,
     'contextLength': contextLength,
+    'nBatch': nBatch,
+    'nUbatch': nUbatch,
     'useGpu': useGpu,
     'maxMemoryMb': maxMemoryMb,
     'verbose': verbose,

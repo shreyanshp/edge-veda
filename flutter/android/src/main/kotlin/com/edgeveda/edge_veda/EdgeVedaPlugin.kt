@@ -311,7 +311,63 @@ class EdgeVedaPlugin : FlutterPlugin, ComponentCallbacks2, MethodChannel.MethodC
                 result.success(true)
             }
 
+            // --- Foreground service for sustained inference (Android 12+) ---
+            // Android 12+ requires apps to declare a foreground service
+            // for any work expected to run >30s while UI is hidden. RAG
+            // bulk-embed and long Whisper transcripts trip this. The
+            // host app starts/stops the service around long jobs; the
+            // notification UX is owned by the host.
+            "startInferenceForegroundService" -> {
+                val args = call.arguments as? Map<*, *> ?: emptyMap<String, Any>()
+                val title = args["title"] as? String ?: "Edge Veda inference"
+                val text = args["text"] as? String ?: "Running on-device AI…"
+                startInferenceForegroundService(title, text)
+                result.success(true)
+            }
+            "stopInferenceForegroundService" -> {
+                stopInferenceForegroundService()
+                result.success(true)
+            }
+
             else -> result.notImplemented()
+        }
+    }
+
+    // =========================================================================
+    // Foreground service for long-running inference (Android 12+ requirement)
+    // =========================================================================
+
+    /**
+     * Start a foreground service so the app can run >30s of inference
+     * while UI is hidden without being killed. Notification text is
+     * passed in by the host so wording stays under host's control.
+     *
+     * On Android 13+ the app must hold POST_NOTIFICATIONS for the
+     * notification to render; without it the service still runs (so
+     * inference doesn't get killed) but no UI shows.
+     */
+    private fun startInferenceForegroundService(title: String, text: String) {
+        val ctx = applicationContext ?: return
+        try {
+            val intent = Intent(ctx, InferenceForegroundService::class.java)
+                .putExtra("title", title)
+                .putExtra("text", text)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                ctx.startForegroundService(intent)
+            } else {
+                ctx.startService(intent)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "startInferenceForegroundService failed: ${e.message}")
+        }
+    }
+
+    private fun stopInferenceForegroundService() {
+        val ctx = applicationContext ?: return
+        try {
+            ctx.stopService(Intent(ctx, InferenceForegroundService::class.java))
+        } catch (e: Exception) {
+            Log.w(TAG, "stopInferenceForegroundService failed: ${e.message}")
         }
     }
 
@@ -1000,11 +1056,24 @@ class EdgeVedaPlugin : FlutterPlugin, ComponentCallbacks2, MethodChannel.MethodC
             level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW -> "running_low"
             else -> "normal"
         }
+        // `evictNow=true` is the strong signal — host should free
+        // every loaded model immediately or risk being killed by the
+        // LMK. Below that we just expose the level so host can use
+        // its own QoS policy (RuntimePolicy.evaluate).
+        // RUNNING_CRITICAL = "system is so low on memory it will
+        // kill background processes, prepare to be next" — that's
+        // the right threshold for proactive eviction.
+        val evictNow = level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL
         memoryEventSink?.success(mapOf(
             "level" to level,
-            "pressureLevel" to pressureLevel
+            "pressureLevel" to pressureLevel,
+            "evictNow" to evictNow,
         ))
-        Log.d(TAG, "onTrimMemory: level=$level ($pressureLevel)")
+        if (evictNow) {
+            Log.w(TAG, "onTrimMemory: level=$level ($pressureLevel) — host should evict loaded models")
+        } else {
+            Log.d(TAG, "onTrimMemory: level=$level ($pressureLevel)")
+        }
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {}
@@ -1012,9 +1081,10 @@ class EdgeVedaPlugin : FlutterPlugin, ComponentCallbacks2, MethodChannel.MethodC
     override fun onLowMemory() {
         memoryEventSink?.success(mapOf(
             "level" to ComponentCallbacks2.TRIM_MEMORY_COMPLETE,
-            "pressureLevel" to "critical"
+            "pressureLevel" to "critical",
+            "evictNow" to true,
         ))
-        Log.w(TAG, "onLowMemory called — critical pressure")
+        Log.w(TAG, "onLowMemory called — critical pressure, host MUST evict loaded models")
     }
 
     // =========================================================================

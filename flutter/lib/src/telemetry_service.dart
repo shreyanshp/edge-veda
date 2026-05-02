@@ -122,6 +122,20 @@ class TelemetryService {
     }
   }
 
+  /// Get the human-readable device model (e.g. "Pixel 8 Pro",
+  /// "iPhone 16 Pro"). On Android returns `Build.MODEL`. Returns
+  /// empty string on error.
+  Future<String> getDeviceModel() async {
+    try {
+      final result = await _methodChannel.invokeMethod<String>('getDeviceModel');
+      return result ?? '';
+    } on PlatformException {
+      return '';
+    } on MissingPluginException {
+      return '';
+    }
+  }
+
   /// Get chip/SoC name (e.g. "Snapdragon 845", "Apple A12").
   ///
   /// On Android returns [Build.SOC_MODEL] (API 31+) or [Build.HARDWARE].

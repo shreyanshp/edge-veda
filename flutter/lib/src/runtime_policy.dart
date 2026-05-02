@@ -251,4 +251,28 @@ class RuntimePolicy {
       QoSLevel.paused => const QoSKnobs(maxFps: 0, resolution: 0, maxTokens: 0),
     };
   }
+
+  /// Maximum tokens for a single CHAT generation turn at a given
+  /// [QoSLevel]. Separate from [knobsForLevel] because the vision
+  /// pipeline uses per-frame budgets (small) while chat needs a
+  /// per-turn cap that's still useful for actual answers (paragraphs).
+  ///
+  /// Use this in `AIChatProvider`-style flows when you want to cap
+  /// output under thermal pressure rather than refuse to respond:
+  /// instead of pausing chat, generate a shorter answer (e.g. 64
+  /// tokens) so the user sees something while the device cools.
+  ///
+  /// Maps:
+  /// - full:    512 tokens (default per-turn)
+  /// - reduced: 256 tokens (~ 2 paragraphs — still useful)
+  /// - minimal: 64 tokens  (~ a sentence — last-resort terse reply)
+  /// - paused:  0 tokens   (don't generate)
+  static int chatMaxTokensForLevel(QoSLevel level) {
+    return switch (level) {
+      QoSLevel.full => 512,
+      QoSLevel.reduced => 256,
+      QoSLevel.minimal => 64,
+      QoSLevel.paused => 0,
+    };
+  }
 }

@@ -72,12 +72,25 @@ class DeviceProfile {
   /// Device capability tier
   final DeviceTier tier;
 
+  /// True if a GPU backend is available for inference acceleration
+  /// (Metal on Apple, Vulkan on Android with `Vulkan 1.2+` support,
+  /// CUDA / Vulkan on Windows / Linux desktops). Filled by the
+  /// async `detectFull` path; the sync `detect` constructor leaves
+  /// this `false` because it can't see the runtime probe.
+  ///
+  /// Use `model_advisor.recommend(...)` and
+  /// `RuntimePolicy.evaluate(...)` consumers should *not* assume
+  /// CPU-only when this is `false` — call `DeviceProfile.detectFull`
+  /// once during app boot before relying on the value.
+  final bool hasGpuBackend;
+
   const DeviceProfile({
     required this.identifier,
     required this.deviceName,
     required this.totalRamGB,
     required this.chipName,
     required this.tier,
+    this.hasGpuBackend = false,
   });
 
   /// Safe memory budget in MB (Android: 50%, iOS: 60%, macOS: 80%)
@@ -102,12 +115,75 @@ class DeviceProfile {
     return _sysctlbyname!;
   }
 
+  /// Async refresh of the cached profile that fills in the
+  /// information `detect()` can't see synchronously:
+  ///
+  /// - **Android `Build.SOC_MODEL`** (Android 12+) — reliably names
+  ///   the actual SoC ("SM8650", "Tensor G3", "Exynos 2400") so
+  ///   `ThreadAdvisor.recommend(...)` can pick the right thread
+  ///   count. `/proc/cpuinfo`'s `Hardware:` line on most flagships
+  ///   reports a useless "Qualcomm Technologies, Inc TARO" string.
+  /// - **GPU backend availability** — Metal (always on Apple),
+  ///   Vulkan (probed via PackageManager.FEATURE_VULKAN_HARDWARE_VERSION
+  ///   ≥ 1.2 on Android), CUDA / Vulkan on desktops.
+  ///
+  /// Call this once during app boot (after `EdgeVeda.init` if the
+  /// host wants the most-precise picture) and the result becomes
+  /// the new value of `DeviceProfile.detect()`. Falls back to the
+  /// sync profile silently if the channel call fails.
+  static Future<DeviceProfile> detectFull([TelemetryService? telemetry]) async {
+    final base = detect();
+    final ts = telemetry ?? TelemetryService();
+    String chipName = base.chipName;
+    String deviceName = base.deviceName;
+    bool hasGpu = base.hasGpuBackend;
+
+    // Apple platforms: Metal is universal on macOS 11+ / iOS 13+,
+    // already implied by being on the platform at all.
+    if (Platform.isIOS || Platform.isMacOS) {
+      hasGpu = true;
+    }
+
+    if (Platform.isAndroid) {
+      // Build.SOC_MODEL is the only reliable SoC name source on
+      // Android 12+; chipName from /proc/cpuinfo is flagship-noise.
+      try {
+        final socModel = await ts.getChipName();
+        if (socModel.isNotEmpty && socModel != 'unknown') {
+          chipName = socModel;
+        }
+      } catch (_) {}
+      try {
+        final dm = await ts.getDeviceModel();
+        if (dm.isNotEmpty) deviceName = dm;
+      } catch (_) {}
+      try {
+        final backend = await ts.getGpuBackend();
+        hasGpu = backend != 'CPU' && backend.isNotEmpty;
+      } catch (_) {}
+    }
+
+    final refined = DeviceProfile(
+      identifier: base.identifier,
+      deviceName: deviceName,
+      totalRamGB: base.totalRamGB,
+      chipName: chipName,
+      tier: base.tier,
+      hasGpuBackend: hasGpu,
+    );
+    _cached = refined;
+    return refined;
+  }
+
   /// Detect current device hardware profile.
   ///
   /// Sync call, cached after first invocation. On Android, returns a
   /// conservative default profile (async detection via MethodChannel is
   /// handled separately by TelemetryService). On simulator or unknown
   /// Apple hardware, falls back to RAM-based tier detection via hw.memsize.
+  ///
+  /// **For best results call [detectFull] once at boot** — it fills in
+  /// SOC_MODEL and GPU-backend availability that the sync path can't see.
   static DeviceProfile detect() {
     if (_cached != null) return _cached!;
 
