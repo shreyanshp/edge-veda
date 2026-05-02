@@ -13,6 +13,7 @@
 #include "edge_veda.h"
 #include "memory_guard.h"
 #include "thread_utils.h"
+#include "win_compat.h"
 #include <cstring>
 #include <cstdlib>
 #include <string>

@@ -1,15 +1,12 @@
 name: Windows DLL build
 
-# Builds the Windows plugin DLL with the C++ core (llama.cpp +
-# whisper.cpp + stable-diffusion.cpp + Vulkan backend) compiled in
-# from third_party submodules. Uploads as a release artifact so host
-# Flutter apps that pull this package via pub git (no submodules) can
-# vendor a real binary instead of building from source.
+# Builds the C++ core as edge_veda.dll for the Flutter desktop runner
+# at bitcoin-portal/mobile-news (issue #574). The Flutter plugin DLL
+# (edge_veda_plugin.dll) is built by the host app's `flutter build
+# windows` — it needs Flutter's CMake wrappers which only exist in a
+# Flutter project context, so we don't try to build it here.
 #
-# Manual-trigger only. Do not auto-fire on push or PR — the build
-# pulls multi-GB submodules + Vulkan SDK and takes ~45 min on a
-# Windows runner; only run it when a host app actually needs a
-# fresh DLL.
+# Manual-trigger only.
 
 on:
   workflow_dispatch:
@@ -27,15 +24,17 @@ jobs:
     timeout-minutes: 90
 
     env:
-      FLUTTER_VERSION_FAKE: '2.5.0'
       EVENT_NAME: ${{ github.event_name }}
 
     steps:
-      - name: Checkout with submodules
+      - name: Checkout with submodules (full history)
         uses: actions/checkout@v4
         with:
           submodules: recursive
-          fetch-depth: 1
+          # libmdbx etc. inside Zano (and similar) need full git
+          # history for `git describe --tags`. fetch-depth: 1 broke
+          # builds before; keep it at 0 here for parity.
+          fetch-depth: 0
 
       - name: Set up Vulkan SDK
         uses: humbletim/install-vulkan-sdk@v1.2
@@ -43,67 +42,53 @@ jobs:
           version: 1.3.290.0
           cache: true
 
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.41.1'
-          channel: stable
-          cache: true
-
-      # Pre-warm Flutter so the next `flutter --version --machine` call
-      # returns clean JSON. The first invocation prints "Building
-      # flutter tool..." / "Running pub upgrade..." on stderr+stdout
-      # which break ConvertFrom-Json downstream. After this discard
-      # call, --machine emits only the JSON.
-      - name: Pre-warm Flutter
+      - name: Configure CMake (core only)
         shell: pwsh
         run: |
-          flutter --version | Out-Null
-
-      - name: Configure CMake
-        shell: pwsh
-        run: |
-          # FLUTTER_ROOT is set by subosito/flutter-action — use it
-          # directly to avoid re-parsing flutter --version.
-          $flutterRoot = $Env:FLUTTER_ROOT
-          $flutterEng = "$flutterRoot/bin/cache/artifacts/engine/windows-x64"
           New-Item -ItemType Directory -Force -Path build | Out-Null
-          cmake -S flutter/windows -B build `
+          # Configure the C++ core directly. Skip the Flutter plugin
+          # (flutter/windows/CMakeLists.txt) — that needs Flutter's
+          # CMake wrapper headers which only exist inside a host
+          # `flutter build windows` invocation. The host app picks
+          # those up automatically when it consumes the edge_veda dep.
+          cmake -S core -B build `
             -G "Visual Studio 17 2022" -A x64 `
             -DCMAKE_BUILD_TYPE=Release `
-            -DFLUTTER_VERSION="$Env:FLUTTER_VERSION_FAKE" `
-            -DFLUTTER_VERSION_MAJOR=2 `
-            -DFLUTTER_VERSION_MINOR=5 `
-            -DFLUTTER_VERSION_PATCH=0 `
-            -DFLUTTER_VERSION_BUILD=0 `
-            -Dflutter_INCLUDE_DIRS="$flutterEng" `
-            -Dflutter_LIBRARY="$flutterEng/flutter_windows.dll.lib"
+            -DEDGE_VEDA_BUILD_SHARED=ON `
+            -DEDGE_VEDA_BUILD_STATIC=OFF `
+            -DEDGE_VEDA_ENABLE_VULKAN=ON `
+            -DEDGE_VEDA_ENABLE_CPU=ON
 
-      - name: Build
+      - name: Build edge_veda target only
         shell: pwsh
-        run: cmake --build build --config Release --parallel
+        run: |
+          # Build ONLY the edge_veda DLL target. The default
+          # `cmake --build build` would also compile every llama.cpp
+          # tool binary (llama-cli, llama-server, llama-perplexity,
+          # llama-fit-params, llama-cvector-generator, ...) which
+          # adds ~30 min of work and we don't ship any of them.
+          cmake --build build --config Release --target edge_veda --parallel
 
       - name: Stage DLL
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path artifact | Out-Null
-          Copy-Item "build/Release/edge_veda_plugin.dll" "artifact/" -Force
-          if (Test-Path "build/Release/edge_veda_plugin.pdb") {
-            Copy-Item "build/Release/edge_veda_plugin.pdb" "artifact/" -Force
-          }
-          if (Test-Path "build/Release/edge_veda.dll") {
-            Copy-Item "build/Release/edge_veda.dll" "artifact/" -Force
-          }
-          if (Test-Path "build/Release/edge_veda.pdb") {
-            Copy-Item "build/Release/edge_veda.pdb" "artifact/" -Force
-          }
+          # Cmake puts the SHARED-library artifact under build/Release
+          # by default on Visual Studio generators, but plugin /
+          # subproject targets can land under nested subdirs — search
+          # for both.
+          $dll = Get-ChildItem -Recurse build -Filter edge_veda.dll | Select-Object -First 1
+          $pdb = Get-ChildItem -Recurse build -Filter edge_veda.pdb | Select-Object -First 1
+          if (-not $dll) { Write-Error "edge_veda.dll not found in build/"; exit 1 }
+          Copy-Item $dll.FullName artifact/ -Force
+          if ($pdb) { Copy-Item $pdb.FullName artifact/ -Force }
           Get-ChildItem artifact
 
       - name: Upload CI artifact
         if: env.EVENT_NAME != 'release'
         uses: actions/upload-artifact@v4
         with:
-          name: edge_veda_plugin-windows-x64
+          name: edge_veda-windows-x64
           path: artifact/*
           retention-days: 14
 
@@ -112,7 +97,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifact/edge_veda_plugin.dll
-            artifact/edge_veda_plugin.pdb
             artifact/edge_veda.dll
             artifact/edge_veda.pdb

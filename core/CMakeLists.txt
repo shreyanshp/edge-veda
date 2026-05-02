@@ -301,7 +301,15 @@ endif()
 # Create library target
 if(EDGE_VEDA_BUILD_SHARED)
     add_library(edge_veda SHARED ${EDGE_VEDA_SOURCES} ${EDGE_VEDA_HEADERS})
-    target_compile_definitions(edge_veda PRIVATE EDGE_VEDA_BUILD_SHARED)
+    target_compile_definitions(edge_veda PRIVATE
+        EDGE_VEDA_BUILD_SHARED
+        # The public header (include/edge_veda.h) flips its
+        # __declspec macro on EV_BUILD_SHARED. Define it here so
+        # the implementation TU compiles with `dllexport` rather
+        # than `dllimport` — without this MSVC raises C4273
+        # "inconsistent dll linkage" which becomes an error under
+        # /W4 /WX (every ev_* function definition triggers).
+        EV_BUILD_SHARED)
 
     # Set version for shared library
     set_target_properties(edge_veda PROPERTIES
