@@ -68,6 +68,19 @@ class EdgeVedaConfig {
   /// Default is Q8_0 (8) for mobile memory optimization.
   final int kvCacheTypeV;
 
+  /// Auto-attach a draft model for speculative decoding after init
+  /// (mobile-news#586 gap #10).
+  ///
+  /// When true (default) the SDK looks up a known-good draft pair
+  /// for the loaded target via [ModelAdvisor.recommendDraftPath] and
+  /// silently attaches it via the FFI speculative API. Failures
+  /// don't surface (no draft on disk, wrong model family, low-tier
+  /// device, older edge_veda binary predating the speculative API)
+  /// — the non-speculative path is the safe fallback. Set to false
+  /// only if the host needs explicit control over speculative
+  /// activation.
+  final bool autoSpeculative;
+
   const EdgeVedaConfig({
     required this.modelPath,
     this.numThreads = 4,
@@ -80,6 +93,7 @@ class EdgeVedaConfig {
     this.flashAttn = -1,
     this.kvCacheTypeK = 8,
     this.kvCacheTypeV = 8,
+    this.autoSpeculative = true,
   });
 
   Map<String, dynamic> toJson() => {
@@ -94,6 +108,7 @@ class EdgeVedaConfig {
     'flashAttn': flashAttn,
     'kvCacheTypeK': kvCacheTypeK,
     'kvCacheTypeV': kvCacheTypeV,
+    'autoSpeculative': autoSpeculative,
   };
 
   @override

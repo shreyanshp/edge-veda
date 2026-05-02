@@ -731,6 +731,56 @@ class MemoryValidation {
 /// Scores models across four dimensions (fit, quality, speed, context)
 /// weighted by use case, and generates optimal EdgeVedaConfig for each.
 class ModelAdvisor {
+  /// Look up the recommended draft model path for speculative decoding
+  /// given a target model GGUF path (mobile-news#586 gap #10).
+  ///
+  /// Returns the absolute path of an on-disk draft GGUF when:
+  ///   - the target's family has a known-good smaller pair (Llama →
+  ///     Llama-3.2-1B, Qwen → Qwen-2.5-0.5B), AND
+  ///   - the paired draft GGUF is already cached locally (the host's
+  ///     ModelManager downloaded it).
+  /// Returns null otherwise — the caller (typically EdgeVeda.init's
+  /// auto-attach hook) should silently skip speculation.
+  ///
+  /// Vocabulary compatibility is enforced at attach time by the FFI
+  /// layer, so the pairing rule here is purely heuristic-by-family.
+  static String? recommendDraftPath(String targetGgufPath) {
+    final lower = targetGgufPath.toLowerCase();
+
+    // Family detection by filename — GGUF naming conventions are
+    // stable enough across HuggingFace mirrors that this works in
+    // practice for our shipping registry. False negatives just
+    // disable speculation, never crash.
+    final dir = targetGgufPath.contains('/')
+        ? targetGgufPath.substring(0, targetGgufPath.lastIndexOf('/'))
+        : targetGgufPath.contains('\\')
+            ? targetGgufPath.substring(0, targetGgufPath.lastIndexOf('\\'))
+            : '';
+    String? draftBasename;
+    if (lower.contains('llama-3.1-8b') ||
+        lower.contains('llama-3.2-3b') ||
+        lower.contains('llama_3.1_8b')) {
+      draftBasename = 'Llama-3.2-1B-Instruct-Q4_K_M.gguf';
+    } else if (lower.contains('qwen2.5-7b') ||
+        lower.contains('qwen-2.5-7b') ||
+        lower.contains('qwen2.5-3b')) {
+      draftBasename = 'Qwen2.5-0.5B-Instruct-Q4_K_M.gguf';
+    } else if (lower.contains('mistral-nemo') ||
+        lower.contains('mistral-7b')) {
+      // No widely-distributed Mistral draft exists today; reuse
+      // Llama-3.2-1B which has a compatible BPE in many quants —
+      // attach will validate vocab and bail on mismatch, costing
+      // only the model load.
+      draftBasename = 'Llama-3.2-1B-Instruct-Q4_K_M.gguf';
+    }
+
+    if (draftBasename == null) return null;
+    final draftPath = dir.isEmpty ? draftBasename : '$dir/$draftBasename';
+    final f = File(draftPath);
+    if (!f.existsSync()) return null;
+    return draftPath;
+  }
+
   // ── Scoring Constants ──
 
   static const _familyBaseScores = <String, int>{
