@@ -497,12 +497,16 @@ void _workerEntryPoint(SendPort mainSendPort) {
       _handleAttachDraft(message, nativeContext!, bindings!, responseSendPort);
     } else if (message is DetachDraftCommand) {
       if (nativeContext != null && bindings != null) {
-        // Older binaries don't expose evSpeculativeDetach; treat
-        // missing symbol as a no-op so older runtimes still work.
-        try {
-          bindings!.evSpeculativeDetach(nativeContext!);
-        } catch (_) {
-          // missing symbol — older edge_veda build, nothing to detach
+        // evSpeculativeDetach is a nullable function pointer —
+        // older binaries don't export the symbol so the typedef
+        // resolves to null. Skip cleanly when not available.
+        final detach = bindings!.evSpeculativeDetach;
+        if (detach != null) {
+          try {
+            detach(nativeContext!);
+          } catch (_) {
+            // Defensive: treat any unexpected throw as no-op.
+          }
         }
       }
       responseSendPort.send(DetachDraftResponse());
@@ -513,11 +517,14 @@ void _workerEntryPoint(SendPort mainSendPort) {
         currentStream = null;
       }
       if (nativeContext != null && bindings != null) {
-        // Detach speculative if attached (no-op if not). Errors
-        // are non-fatal — we're disposing anyway.
-        try {
-          bindings!.evSpeculativeDetach(nativeContext!);
-        } catch (_) {}
+        // Detach speculative if attached (no-op if not, including
+        // when the symbol isn't exported by an older binary).
+        final detach = bindings!.evSpeculativeDetach;
+        if (detach != null) {
+          try {
+            detach(nativeContext!);
+          } catch (_) {}
+        }
         bindings!.evFree(nativeContext!);
         nativeContext = null;
       }
