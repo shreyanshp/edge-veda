@@ -735,44 +735,125 @@ class ModelAdvisor {
   /// given a target model GGUF path (mobile-news#586 gap #10).
   ///
   /// Returns the absolute path of an on-disk draft GGUF when:
-  ///   - the target's family has a known-good smaller pair (Llama →
-  ///     Llama-3.2-1B, Qwen → Qwen-2.5-0.5B), AND
+  ///   - the target's family has a known-good smaller pair, AND
   ///   - the paired draft GGUF is already cached locally (the host's
   ///     ModelManager downloaded it).
-  /// Returns null otherwise — the caller (typically EdgeVeda.init's
-  /// auto-attach hook) should silently skip speculation.
+  /// Returns null otherwise — the caller should silently skip
+  /// speculation in that case.
   ///
   /// Vocabulary compatibility is enforced at attach time by the FFI
-  /// layer, so the pairing rule here is purely heuristic-by-family.
+  /// layer (`ev_speculative_attach`), so the pairing here is purely
+  /// heuristic-by-family. False positives (wrong vocab) cost a model
+  /// load + a graceful EV_ERROR_INVALID_MODEL, no crash.
+  ///
+  /// Pairing matrix (covers everything in `ModelRegistry`; future
+  /// additions need a row here):
+  ///
+  /// | Target family                 | Draft                     | Notes                              |
+  /// |-------------------------------|---------------------------|------------------------------------|
+  /// | Llama 3.1 8B / 3.2 3B         | Llama-3.2-1B-Instruct     | Same vocab; canonical pairing.     |
+  /// | Llama 3.2 1B                  | (none — IS the draft)     | Skip; can't draft itself.          |
+  /// | Qwen 2.5 7B / 3B / 1.5B       | Qwen2.5-0.5B-Instruct     | Same Qwen tokenizer.               |
+  /// | Qwen 3 (any)                  | Qwen3-0.6B                | Qwen3 family draft.                |
+  /// | Mistral Nemo / Mistral 7B     | Llama-3.2-1B (fallback)   | Vocab compat validated at attach.  |
+  /// | Phi 3.5 mini                  | (none)                    | Phi tokenizer ≠ any small model.   |
+  /// | Gemma 2 2B                    | (none)                    | Already small; no smaller Gemma.   |
+  /// | Gemma 3 (any)                 | Gemma-3-1B                | Gemma 3 family has 1B variant.     |
+  /// | SmolLM 2 1.7B                 | SmolLM2-135M              | Same vocab.                        |
+  /// | SmolLM 2 360M / 135M          | (none — IS the draft)     | Skip; already smallest.            |
+  /// | TinyLlama 1.1B                | (none)                    | Already smallest in family.        |
+  /// | DeepSeek-R1 distill (8B/7B)   | Llama-3.2-1B (fallback)   | DeepSeek-R1-distill uses Llama vocab. |
+  /// | DeepSeek V3 (any)             | (none)                    | DeepSeek-V3 vocab unique.          |
+  /// | Whisper / multimodal vision   | (none)                    | Speculative is text-only.          |
   static String? recommendDraftPath(String targetGgufPath) {
     final lower = targetGgufPath.toLowerCase();
 
-    // Family detection by filename — GGUF naming conventions are
-    // stable enough across HuggingFace mirrors that this works in
-    // practice for our shipping registry. False negatives just
-    // disable speculation, never crash.
     final dir = targetGgufPath.contains('/')
         ? targetGgufPath.substring(0, targetGgufPath.lastIndexOf('/'))
         : targetGgufPath.contains('\\')
             ? targetGgufPath.substring(0, targetGgufPath.lastIndexOf('\\'))
             : '';
+
+    // Skip-list: targets that ARE drafts or are already-smallest.
+    // Speculative speeds up large→small pairs; pairing a small model
+    // with itself buys nothing and burns RAM.
+    const _skipPatterns = [
+      'llama-3.2-1b', 'llama_3.2_1b',
+      'smollm2-135m', 'smollm2-360m',
+      'qwen2.5-0.5b', 'qwen-2.5-0.5b',
+      'qwen3-0.6b', 'qwen3_0.6b',
+      'tinyllama',
+      'gemma-3-1b', 'gemma_3_1b',
+      'gemma-2-2b', 'gemma_2_2b',  // already small; no smaller Gemma
+      'phi-3.5-mini', 'phi_3.5_mini',  // no smaller Phi
+      'deepseek-v3',
+    ];
+    for (final s in _skipPatterns) {
+      if (lower.contains(s)) return null;
+    }
+
     String? draftBasename;
+    // ---- Llama family ----
     if (lower.contains('llama-3.1-8b') ||
+        lower.contains('llama_3.1_8b') ||
         lower.contains('llama-3.2-3b') ||
-        lower.contains('llama_3.1_8b')) {
-      draftBasename = 'Llama-3.2-1B-Instruct-Q4_K_M.gguf';
-    } else if (lower.contains('qwen2.5-7b') ||
-        lower.contains('qwen-2.5-7b') ||
-        lower.contains('qwen2.5-3b')) {
-      draftBasename = 'Qwen2.5-0.5B-Instruct-Q4_K_M.gguf';
-    } else if (lower.contains('mistral-nemo') ||
-        lower.contains('mistral-7b')) {
-      // No widely-distributed Mistral draft exists today; reuse
-      // Llama-3.2-1B which has a compatible BPE in many quants —
-      // attach will validate vocab and bail on mismatch, costing
-      // only the model load.
+        lower.contains('llama_3.2_3b') ||
+        lower.contains('llama-3.3-70b') ||
+        lower.contains('llama_3.3_70b')) {
       draftBasename = 'Llama-3.2-1B-Instruct-Q4_K_M.gguf';
     }
+    // ---- Qwen 2.5 family ----
+    else if (lower.contains('qwen2.5-7b') ||
+        lower.contains('qwen-2.5-7b') ||
+        lower.contains('qwen2.5-3b') ||
+        lower.contains('qwen-2.5-3b') ||
+        lower.contains('qwen2.5-1.5b') ||
+        lower.contains('qwen2.5-coder')) {
+      draftBasename = 'Qwen2.5-0.5B-Instruct-Q4_K_M.gguf';
+    }
+    // ---- Qwen 3 family ----
+    else if (lower.contains('qwen3-')) {
+      draftBasename = 'Qwen3-0.6B-Q4_K_M.gguf';
+    }
+    // ---- Gemma 3 family (1B exists as draft) ----
+    else if (lower.contains('gemma-3-4b') ||
+        lower.contains('gemma_3_4b') ||
+        lower.contains('gemma-3-12b') ||
+        lower.contains('gemma_3_12b') ||
+        lower.contains('gemma-3-27b') ||
+        lower.contains('gemma_3_27b')) {
+      draftBasename = 'gemma-3-1b-it-Q4_K_M.gguf';
+    }
+    // ---- SmolLM2 family ----
+    else if (lower.contains('smollm2-1.7b') ||
+        lower.contains('smollm2_1.7b')) {
+      draftBasename = 'SmolLM2-135M-Instruct-Q4_K_M.gguf';
+    }
+    // ---- Mistral family (vocab close-enough to Llama 3.2) ----
+    else if (lower.contains('mistral-nemo') ||
+        lower.contains('mistral-7b') ||
+        lower.contains('mistral_7b')) {
+      // No widely-distributed sub-1B Mistral exists; Llama-3.2-1B has
+      // overlapping BPE tokens for ~95% of the dictionary. Attach
+      // validates vocab and bails on mismatch, costing only model load.
+      draftBasename = 'Llama-3.2-1B-Instruct-Q4_K_M.gguf';
+    }
+    // ---- DeepSeek-R1 distills (Llama-derived) ----
+    else if (lower.contains('deepseek-r1-distill-llama') ||
+        lower.contains('deepseek-r1-distill-qwen-7b') ||
+        lower.contains('deepseek-r1-distill-qwen-14b')) {
+      // R1-distill-llama uses Llama vocab; R1-distill-qwen uses Qwen.
+      // The qwen branch picks Qwen2.5-0.5B; the llama branch
+      // Llama-3.2-1B. The check above the else-if only triggers for
+      // distill-llama; pure DeepSeek-V3 was already skipped.
+      if (lower.contains('qwen')) {
+        draftBasename = 'Qwen2.5-0.5B-Instruct-Q4_K_M.gguf';
+      } else {
+        draftBasename = 'Llama-3.2-1B-Instruct-Q4_K_M.gguf';
+      }
+    }
+    // ---- Anything else: speculative not configured ----
+    // (Phi, multimodal vision, Whisper, BGE/MiniLM embedders, etc.)
 
     if (draftBasename == null) return null;
     final draftPath = dir.isEmpty ? draftBasename : '$dir/$draftBasename';

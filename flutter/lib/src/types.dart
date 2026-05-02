@@ -68,17 +68,35 @@ class EdgeVedaConfig {
   /// Default is Q8_0 (8) for mobile memory optimization.
   final int kvCacheTypeV;
 
-  /// Auto-attach a draft model for speculative decoding after init
-  /// (mobile-news#586 gap #10).
+  /// Opt-in flag for auto-attaching a draft model for speculative
+  /// decoding (mobile-news#586 gap #10).
   ///
-  /// When true (default) the SDK looks up a known-good draft pair
-  /// for the loaded target via [ModelAdvisor.recommendDraftPath] and
-  /// silently attaches it via the FFI speculative API. Failures
-  /// don't surface (no draft on disk, wrong model family, low-tier
-  /// device, older edge_veda binary predating the speculative API)
-  /// — the non-speculative path is the safe fallback. Set to false
-  /// only if the host needs explicit control over speculative
-  /// activation.
+  /// **Default: false.**
+  ///
+  /// Why off-by-default — current speculative implementation uses
+  /// greedy acceptance (`sampled == draft[i]`). That's bit-for-bit
+  /// identical to non-speculative *only at* temperature=0.
+  /// `GenerateOptions.temperature` defaults to 0.7, where the strict
+  /// equality rule discards probabilistic acceptance and skews the
+  /// output distribution toward deterministic samples. The output
+  /// stays valid (every accepted token IS a valid target sample),
+  /// but the distribution shifts toward lower-effective-temperature
+  /// generations. Most users won't notice, but it's a subtle
+  /// regression we don't want to ship default-on.
+  ///
+  /// Probabilistic acceptance (preserves the exact target
+  /// distribution at any temperature) is a follow-up requiring
+  /// switching the streaming sampler from `llama_sampler` to
+  /// `common_sampler` — tracked separately. Once that lands we'll
+  /// flip this default to true.
+  ///
+  /// Hosts that explicitly want the speedup today (e.g. for
+  /// temp=0 / greedy generation, or for chat where users prefer
+  /// speed over distribution fidelity) can pass `true` to opt in.
+  /// The auto-attach path uses
+  /// [ModelAdvisor.recommendDraftPath] for pairing, gates on
+  /// `tier ≥ medium`, and silently no-ops when the paired draft
+  /// isn't on disk.
   final bool autoSpeculative;
 
   const EdgeVedaConfig({
@@ -93,7 +111,7 @@ class EdgeVedaConfig {
     this.flashAttn = -1,
     this.kvCacheTypeK = 8,
     this.kvCacheTypeV = 8,
-    this.autoSpeculative = true,
+    this.autoSpeculative = false,
   });
 
   Map<String, dynamic> toJson() => {
