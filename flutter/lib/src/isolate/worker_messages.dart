@@ -108,6 +108,34 @@ class CancelStreamCommand extends WorkerCommand {}
 /// Query memory stats from the active native context
 class GetMemoryStatsCommand extends WorkerCommand {}
 
+/// Attach a speculative-decoding draft model to the worker's
+/// persistent context. Must be issued AFTER [InitWorkerCommand]
+/// succeeds. The draft persists across multiple stream commands
+/// until [DetachDraftCommand] or [DisposeWorkerCommand].
+class AttachDraftCommand extends WorkerCommand {
+  /// Path to the draft model GGUF on disk.
+  final String draftPath;
+
+  /// Number of speculative tokens drafted per round (K). 8 is a
+  /// well-balanced default; values >16 rarely help because acceptance
+  /// rate falls off and the target's batched verify pass starts
+  /// dominating cost.
+  final int nDraft;
+
+  /// Threads to use for the draft model. -1 = same as target.
+  final int numThreadsDraft;
+
+  AttachDraftCommand({
+    required this.draftPath,
+    this.nDraft = 8,
+    this.numThreadsDraft = -1,
+  });
+}
+
+/// Detach the speculative draft model and free its resources. Safe
+/// to call when no draft is attached (no-op).
+class DetachDraftCommand extends WorkerCommand {}
+
 /// Dispose worker and free native resources
 class DisposeWorkerCommand extends WorkerCommand {}
 
@@ -213,6 +241,21 @@ class MemoryStatsResponse extends WorkerResponse {
     required this.contextBytes,
   });
 }
+
+/// Speculative draft attached successfully.
+class AttachDraftSuccessResponse extends WorkerResponse {}
+
+/// Speculative draft attach failed (draft model load error,
+/// tokenizer mismatch, or SDK build doesn't expose the API).
+class AttachDraftErrorResponse extends WorkerResponse {
+  final String message;
+  final int errorCode;
+  AttachDraftErrorResponse({required this.message, required this.errorCode});
+}
+
+/// Speculative draft detached (or no draft was attached — both
+/// outcomes return success).
+class DetachDraftResponse extends WorkerResponse {}
 
 /// Worker disposed and ready to terminate
 class DisposedResponse extends WorkerResponse {}

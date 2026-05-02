@@ -818,9 +818,12 @@ class ModelAdvisor {
     'Q3_K_L': 1.20,
     // 2-bit (quality cliff)
     'Q2_K': 1.50,
+    'Q2_K_S': 1.50,
     // i-quants — codebook-based, similar bpw but lookup overhead
     'IQ4_NL': 1.10,
     'IQ4_XS': 1.15,
+    'IQ4_M': 1.10,
+    'IQ4_S': 1.15,
     'IQ3_M': 1.20,
     'IQ3_S': 1.25,
     'IQ3_XS': 1.30,
@@ -831,6 +834,18 @@ class ModelAdvisor {
     'IQ2_XXS': 1.45,
     'IQ1_M': 1.55,
     'IQ1_S': 1.60,
+    // Ternary quants — BitNet-family (~1.6–2.1 bpw, three-valued
+    // weights). Highest throughput tier on memory-bandwidth-bound
+    // hardware, but only viable for models trained natively at this
+    // precision (post-hoc TQ quantisation of a non-BitNet model
+    // collapses quality).
+    'TQ1_0': 1.65,
+    'TQ2_0': 1.55,
+    // K-quant aliases without the _S/_M/_L mixing tier (some GGUFs
+    // ship with the bare suffix). Treat as the medium tier.
+    'Q3_K': 1.30,
+    'Q4_K': 1.15,
+    'Q5_K': 1.05,
     // Unsloth Dynamic — sensitive tensors held at higher precision
     'UD-Q2_K_XL': 1.30,
     'UD-Q3_K_XL': 1.18,
@@ -872,8 +887,11 @@ class ModelAdvisor {
     'Q3_K_M': -7,
     'Q3_K_S': -10,
     'Q2_K': -15,
+    'Q2_K_S': -16,
     'IQ4_NL': -3,
     'IQ4_XS': -4,
+    'IQ4_M': -3,
+    'IQ4_S': -4,
     'IQ3_M': -7,
     'IQ3_S': -8,
     'IQ3_XS': -9,
@@ -884,6 +902,17 @@ class ModelAdvisor {
     'IQ2_XXS': -17,
     'IQ1_M': -20,
     'IQ1_S': -22,
+    // Ternary — these scores assume a model trained natively at this
+    // precision (BitNet B1.58 / Llama-3 1.58-bit retrofits). Post-hoc
+    // ternary quantisation of a non-BitNet model would be much worse
+    // than these numbers suggest; gate at the catalog level if you
+    // ever ship one.
+    'TQ2_0': -8,
+    'TQ1_0': -12,
+    // K-quant aliases — match the medium tier of their family
+    'Q3_K': -7,
+    'Q4_K': -3,
+    'Q5_K': -2,
     'UD-Q2_K_XL': -10,
     'UD-Q3_K_XL': -5,
     'UD-Q4_K_XL': -1,

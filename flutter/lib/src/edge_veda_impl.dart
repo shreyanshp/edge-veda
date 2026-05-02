@@ -753,6 +753,69 @@ class EdgeVeda {
     _config = null;
   }
 
+  /// Attach a speculative-decoding draft model to the active
+  /// streaming worker. Speeds up generation ~1.5–2× when the draft's
+  /// proposals match the target's choices, with bit-identical output
+  /// under greedy sampling. Both models must share the same
+  /// tokenizer (typically same model family, smaller parameter count).
+  ///
+  /// Lazy-spawn semantics: if the streaming worker isn't running yet,
+  /// this method spawns it and loads the target model first (same
+  /// path as the first [generateStream] call). The draft load adds
+  /// ~700 MB–1 GB RAM on top of the target's footprint.
+  ///
+  /// [draftPath] — path to the draft model GGUF on disk.
+  /// [nDraft] — speculative tokens per round (default 8). Higher is
+  /// not always better; acceptance rate falls off and the target's
+  /// batched verify cost starts dominating beyond ~16.
+  ///
+  /// Returns true on successful attach. Returns false if the draft
+  /// load failed (tokenizer mismatch, file missing, OOM) or the
+  /// edge_veda binary doesn't expose `ev_speculative_*` symbols
+  /// (pre-mobile-news#586 build). Speculative is *additive*: a
+  /// failed attach leaves generation working in non-speculative
+  /// mode, so callers should never hard-fail on this.
+  Future<bool> attachSpeculativeDraft({
+    required String draftPath,
+    int nDraft = 8,
+  }) async {
+    if (!_isInitialized || _config == null) {
+      throw const GenerationException(
+        'EdgeVeda must be init()-ed before attaching a speculative draft.',
+      );
+    }
+    // Lazily spawn + initialise the worker the same way generateStream
+    // does, so callers can attach the draft right after init() without
+    // first kicking a dummy generate.
+    _worker ??= StreamingWorker();
+    if (!_worker!.isActive) {
+      try {
+        await _worker!.spawn();
+        await _worker!.init(
+          modelPath: _config!.modelPath,
+          numThreads: _config!.numThreads,
+          contextSize: _config!.contextLength,
+          useGpu: _config!.useGpu,
+          memoryLimitBytes: _config!.maxMemoryMb * 1024 * 1024,
+          flashAttn: _config!.flashAttn,
+          kvCacheTypeK: _config!.kvCacheTypeK,
+          kvCacheTypeV: _config!.kvCacheTypeV,
+        );
+      } catch (e) {
+        return false;
+      }
+    }
+    return _worker!.attachDraft(draftPath: draftPath, nDraft: nDraft);
+  }
+
+  /// Detach the speculative draft model. Safe to call when nothing
+  /// is attached. After detach, the next stream falls back to
+  /// non-speculative single-token decoding.
+  Future<void> detachSpeculativeDraft() async {
+    if (_worker == null || !_worker!.isActive) return;
+    await _worker!.detachDraft();
+  }
+
   // ===========================================================================
   // Vision Inference (Phase 8 - VLM)
   // ===========================================================================

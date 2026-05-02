@@ -298,6 +298,57 @@ class StreamingWorker {
     _commandPort!.send(CancelStreamCommand());
   }
 
+  /// Attach a speculative-decoding draft model. See
+  /// [AttachDraftCommand] for parameter docs. Returns true on
+  /// success; false if the draft load failed, the worker isn't
+  /// initialised, or the SDK build doesn't expose the speculative
+  /// C-API (older binaries).
+  Future<bool> attachDraft({
+    required String draftPath,
+    int nDraft = 8,
+    int numThreadsDraft = -1,
+  }) async {
+    if (!_isActive || _commandPort == null) return false;
+    final completer = Completer<bool>();
+    final subscription = responses.listen((response) {
+      if (response is AttachDraftSuccessResponse) {
+        completer.complete(true);
+      } else if (response is AttachDraftErrorResponse) {
+        completer.complete(false);
+      }
+    });
+    _commandPort!.send(AttachDraftCommand(
+      draftPath: draftPath,
+      nDraft: nDraft,
+      numThreadsDraft: numThreadsDraft,
+    ));
+    try {
+      return await completer.future.timeout(const Duration(seconds: 60));
+    } catch (_) {
+      return false;
+    } finally {
+      await subscription.cancel();
+    }
+  }
+
+  /// Detach the speculative draft model. Safe to call when no
+  /// draft is attached. Always succeeds.
+  Future<void> detachDraft() async {
+    if (!_isActive || _commandPort == null) return;
+    final completer = Completer<void>();
+    final subscription = responses.listen((response) {
+      if (response is DetachDraftResponse) completer.complete();
+    });
+    _commandPort!.send(DetachDraftCommand());
+    try {
+      await completer.future.timeout(const Duration(seconds: 5));
+    } catch (_) {
+      // Ignore — detach is best-effort.
+    } finally {
+      await subscription.cancel();
+    }
+  }
+
   /// Dispose worker and free all resources
   Future<void> dispose() async {
     if (!_isActive || _commandPort == null) return;
@@ -435,6 +486,26 @@ void _workerEntryPoint(SendPort mainSendPort) {
         return;
       }
       _handleGetMemoryStats(nativeContext!, bindings!, responseSendPort);
+    } else if (message is AttachDraftCommand) {
+      if (nativeContext == null || bindings == null) {
+        responseSendPort.send(AttachDraftErrorResponse(
+          message: 'Worker not initialized',
+          errorCode: -6, // EV_ERROR_CONTEXT_INVALID
+        ));
+        return;
+      }
+      _handleAttachDraft(message, nativeContext!, bindings!, responseSendPort);
+    } else if (message is DetachDraftCommand) {
+      if (nativeContext != null && bindings != null) {
+        // Older binaries don't expose evSpeculativeDetach; treat
+        // missing symbol as a no-op so older runtimes still work.
+        try {
+          bindings!.evSpeculativeDetach(nativeContext!);
+        } catch (_) {
+          // missing symbol — older edge_veda build, nothing to detach
+        }
+      }
+      responseSendPort.send(DetachDraftResponse());
     } else if (message is DisposeWorkerCommand) {
       // Cleanup
       if (currentStream != null && bindings != null) {
@@ -442,6 +513,11 @@ void _workerEntryPoint(SendPort mainSendPort) {
         currentStream = null;
       }
       if (nativeContext != null && bindings != null) {
+        // Detach speculative if attached (no-op if not). Errors
+        // are non-fatal — we're disposing anyway.
+        try {
+          bindings!.evSpeculativeDetach(nativeContext!);
+        } catch (_) {}
         bindings!.evFree(nativeContext!);
         nativeContext = null;
       }
@@ -682,5 +758,57 @@ void _handleGetMemoryStats(
     );
   } finally {
     calloc.free(statsPtr);
+  }
+}
+
+void _handleAttachDraft(
+  AttachDraftCommand cmd,
+  ffi.Pointer<EvContextImpl> ctx,
+  EdgeVedaNativeBindings bindings,
+  SendPort responseSendPort,
+) {
+  // Older edge_veda binaries don't export the speculative C-API.
+  // The bindings expose the symbols as nullable function pointers,
+  // so we can detect missing-symbol gracefully and the host code
+  // can decide whether to surface an error or just continue
+  // without speculative.
+  final paramsDefault = bindings.evSpeculativeParamsDefault;
+  final attach = bindings.evSpeculativeAttach;
+  if (paramsDefault == null || attach == null) {
+    responseSendPort.send(AttachDraftErrorResponse(
+      message: 'edge_veda binary does not expose ev_speculative_* '
+          '(pre-mobile-news#586 build)',
+      errorCode: -1, // EV_ERROR_INVALID_ARGUMENT
+    ));
+    return;
+  }
+
+  final draftPathPtr = cmd.draftPath.toNativeUtf8();
+  final paramsPtr = calloc<EvSpeculativeParams>();
+  try {
+    // Seed with engine-side defaults (n_max=8, p_min=0.9, etc.) and
+    // override only what the caller asked for.
+    paramsDefault(paramsPtr);
+    if (cmd.nDraft > 0) {
+      paramsPtr.ref.n_max = cmd.nDraft;
+    }
+    final rc = attach(ctx, draftPathPtr, paramsPtr);
+    if (rc != 0) {
+      responseSendPort.send(AttachDraftErrorResponse(
+        message: 'ev_speculative_attach failed (code $rc) — likely '
+            'tokenizer mismatch or draft model load error',
+        errorCode: rc,
+      ));
+      return;
+    }
+    responseSendPort.send(AttachDraftSuccessResponse());
+  } catch (e) {
+    responseSendPort.send(AttachDraftErrorResponse(
+      message: 'ev_speculative_attach threw: $e',
+      errorCode: -3, // EV_ERROR_UNKNOWN
+    ));
+  } finally {
+    calloc.free(paramsPtr);
+    calloc.free(draftPathPtr);
   }
 }

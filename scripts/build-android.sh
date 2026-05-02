@@ -145,20 +145,73 @@ for abi in $ABIS; do
     BUILD_ABI_DIR="$BUILD_DIR/$abi"
     mkdir -p "$BUILD_ABI_DIR"
 
+    # Vulkan support gating per ABI:
+    #   arm64-v8a + x86_64  → Vulkan ON  (vulkan-hpp's vk::Buffer
+    #                          stream operators only work on 64-bit
+    #                          where VkBuffer is a pointer typedef)
+    #   armeabi-v7a         → Vulkan OFF (32-bit ARM, vk::Buffer is
+    #                          uint64_t, vulkan-hpp 1.4 stream ops
+    #                          don't compile against it)
+    # ggml falls back to CPU at runtime on Vulkan-enabled .so when
+    # the device's libvulkan can't init, so the 32-bit CPU-only
+    # build is only a deployment-time choice — not a behaviour change
+    # vs. an all-Vulkan-ON build that fails dlopen on old drivers.
+    case "$abi" in
+        armeabi-v7a) ABI_VULKAN=OFF ;;
+        *)           ABI_VULKAN=ON  ;;
+    esac
+    echo "  Vulkan: $ABI_VULKAN"
+
+    # ggml-vulkan needs glslc (GLSL→SPIR-V compiler) to compile its
+    # compute shaders at build time. The NDK ships glslc + spirv-tools
+    # in its shader-tools directory; point cmake at them directly so
+    # we don't depend on the user installing a separate Vulkan SDK.
+    NDK_HOST_TAG=""
+    case "$(uname -s)" in
+        Darwin) NDK_HOST_TAG="darwin-x86_64" ;;
+        Linux)  NDK_HOST_TAG="linux-x86_64"  ;;
+        *)      NDK_HOST_TAG="$(uname -s | tr '[:upper:]' '[:lower:]')-x86_64" ;;
+    esac
+    NDK_GLSLC="$ANDROID_NDK/shader-tools/$NDK_HOST_TAG/glslc"
+    if [ ! -x "$NDK_GLSLC" ]; then
+        echo "WARNING: NDK glslc not found at $NDK_GLSLC — Vulkan build may fail."
+    fi
+
+    # vulkan.hpp (the header-only C++ wrapper around vulkan.h) does NOT
+    # ship with the NDK r28 — only the C header is in the sysroot. We
+    # source vulkan.hpp from Homebrew's vulkan-headers package; it's
+    # pure C++ inline code over the same C ABI, so cross-using a
+    # macOS-host vulkan.hpp with the NDK's vulkan.h is safe.
+    VULKAN_HPP_INCLUDE=""
+    for candidate in \
+        /opt/homebrew/include \
+        /usr/local/include \
+        "$VULKAN_SDK/include"; do
+        if [ -f "$candidate/vulkan/vulkan.hpp" ]; then
+            VULKAN_HPP_INCLUDE="$candidate"
+            break
+        fi
+    done
+    if [ -z "$VULKAN_HPP_INCLUDE" ]; then
+        echo "WARNING: vulkan.hpp not found. Install via 'brew install vulkan-headers' or set VULKAN_SDK."
+    fi
+
     cmake -B "$BUILD_ABI_DIR" \
         -S "$CORE_DIR" \
         -G Ninja \
         -DCMAKE_TOOLCHAIN_FILE="$CORE_DIR/cmake/android.toolchain.cmake" \
         -DANDROID_ABI="$abi" \
-        -DANDROID_PLATFORM=android-24 \
+        -DANDROID_PLATFORM=android-28 \
         -DANDROID_STL=c++_shared \
         -DANDROID_NDK="$ANDROID_NDK" \
         -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
         -DEDGE_VEDA_BUILD_SHARED=ON \
         -DEDGE_VEDA_BUILD_STATIC=OFF \
-        -DEDGE_VEDA_ENABLE_VULKAN=OFF \
+        -DEDGE_VEDA_ENABLE_VULKAN="$ABI_VULKAN" \
         -DEDGE_VEDA_ENABLE_CPU=ON \
-        -DGGML_OPENMP=OFF
+        -DGGML_OPENMP=OFF \
+        -DVulkan_GLSLC_EXECUTABLE="$NDK_GLSLC" \
+        -DCMAKE_CXX_FLAGS="${VULKAN_HPP_INCLUDE:+-I$VULKAN_HPP_INCLUDE}"
 
     cmake --build "$BUILD_ABI_DIR" --config "$BUILD_TYPE"
 
