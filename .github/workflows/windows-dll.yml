@@ -28,7 +28,7 @@ jobs:
 
     steps:
       - name: Checkout with submodules (full history)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
           # libmdbx etc. inside Zano (and similar) need full git
@@ -86,7 +86,7 @@ jobs:
 
       - name: Upload CI artifact
         if: env.EVENT_NAME != 'release'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: edge_veda-windows-x64
           path: artifact/*
