@@ -1246,9 +1246,11 @@ class ModelAdvisor {
       contextLength = min(contextLength, 2048);
     }
     // Adaptive thread count with thermal-safe cap.
-    // Android CPU-only: big.LITTLE SoCs throttle hard under sustained load,
-    // so cap at 4 threads max. Low/minimum-tier devices get 2 threads to
-    // preserve headroom for OS and UI.
+    // Android: big.LITTLE SoCs throttle hard under sustained load,
+    // so cap at 4 threads max. Low/minimum-tier devices get 2 threads
+    // to preserve headroom for OS and UI. Threads matter even with the
+    // Vulkan backend on — prompt-eval, sampling, and CPU-side ggml ops
+    // still run on the threadpool.
     // iOS/macOS: Metal GPU handles most inference; threads for prompt eval.
     final isAndroid = device.identifier == 'android';
     int threads;
@@ -1257,16 +1259,38 @@ class ModelAdvisor {
     } else {
       threads = device.tier.index >= DeviceTier.high.index ? 6 : 4;
     }
-    // Android is CPU-only (no Metal); use 50% memory budget.
-    // iOS/macOS have Metal GPU; use 60% memory budget.
-    final memoryRatio = isAndroid ? 0.50 : 0.60;
+    // Android with Vulkan compute: lift the memory budget toward 60%
+    // because GPU pipelines reuse the unified buffer pool and we want
+    // headroom for the model + KV cache + Vulkan staging buffers.
+    // Minimum/low-tier devices keep the conservative 50% — they're
+    // RAM-tight and a Vulkan OOM there triggers the ggml CPU fallback
+    // path which we don't want to thrash.
+    // iOS/macOS keep 60% (Metal unified memory).
+    double memoryRatio;
+    if (isAndroid) {
+      memoryRatio = device.tier.index >= DeviceTier.medium.index ? 0.60 : 0.50;
+    } else {
+      memoryRatio = 0.60;
+    }
     final maxMemoryMb = (device.totalRamGB * 1024 * memoryRatio).round();
+
+    // GPU selection. iOS / macOS always use Metal. Android opts in to
+    // Vulkan compute on medium+ tier devices; the SDK ships Vulkan-
+    // enabled jniLibs (arm64-v8a + x86_64) and ggml falls back to CPU
+    // automatically if vkCreateInstance / vkAllocateMemory fail at
+    // load time, so this is safe on driver-broken devices.
+    // Minimum/low tier stays CPU-only — those phones rarely have a
+    // working Vulkan driver and the GPU init overhead isn't worth it
+    // when the model already fits comfortably on CPU.
+    final useGpu = isAndroid
+        ? device.tier.index >= DeviceTier.medium.index
+        : true;
 
     return EdgeVedaConfig(
       modelPath: '',
       numThreads: threads,
       contextLength: contextLength,
-      useGpu: !isAndroid,
+      useGpu: useGpu,
       maxMemoryMb: maxMemoryMb,
       kvCacheTypeK: 8,
       kvCacheTypeV: 8,
